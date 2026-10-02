@@ -1,0 +1,17 @@
+Customer ID,Customer Name,Sale Date,Sale Amount,Quantity,Category
+C001,Ana Torres,01/05/2026,"1,250.00",3,Home
+C002,Luis Rojas,01/06/2026,890.50,1,Electronics
+C003,Marta Gomez,01/07/2026,"2,100.00",5,Home
+C001,Ana Torres,01/05/2026,"1,250.00",3,Home
+C004,,01/08/2026,430.00,2,Clothing
+C005,Pedro Ibarra,01/09/2026,N/A,1,Electronics
+C006,Sofia Castro,01/10/2026,"15,000,000.00",1,Home
+C007,Jorge Pena,13/32/2026,560.00,4,Clothing
+C008,Valentina Ruiz,01/11/2026,720.00,abc,Electronics
+C009,Camilo Diaz,01/12/2026,-50.00,2,Home
+C010,Isabel Vargas,01/13/2026,990.00,3,Clothing
+C011,-,01/14/2026,"1,100.00",2,Home
+c012,Diego Fernandez,01/15/2026,330.00,1,Electronics
+C013,Paula Leon,01/16/2026,"  1,780.00 ",6,Clothing
+C014,Ricardo Soto,,640.00,2,Home
+C010,Isabel Vargas,01/13/2026,990.00,3,Clothing

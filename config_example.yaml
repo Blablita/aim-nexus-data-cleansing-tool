@@ -1,0 +1,54 @@
+# ============================================================
+# Config: EXAMPLE (sample_data/sales_example.csv)
+# ============================================================
+# Copy this file for each client/project (e.g. config_clientX.yaml) and change
+# only what is different. There is no need to touch the code in cleaning/.
+
+input:
+  encoding: "utf-8"      # if the real file uses another one, the script retries automatically
+  delimiter: ","
+
+columns:
+  number_format: "us"    # "us" = 1,250.00   |   "es" = 1.250,00
+  # Optional mapping: ORIGINAL name in the file -> standardized name.
+  # Any column not listed is normalized automatically (lower case, underscores).
+  rename:
+    "Sale Amount": amount
+
+  # Expected type per STANDARDIZED column (after rename/slugify).
+  types:
+    customer_id: string
+    customer_name: string
+    sale_date: date
+    amount: float
+    quantity: integer
+    category: string
+
+  # Expected date format for "date" columns (Python strptime codes).
+  date_format: "%m/%d/%Y"
+
+duplicates:
+  subset: ["customer_id", "sale_date", "amount"]   # columns that define "the same record"
+  keep: "first"      # first | last
+  action: "remove"   # remove | flag
+
+missing_values:
+  # drop_row | fill_value | fill_mean | fill_median | fill_mode | flag_only | ignore
+  strategy:
+    customer_name: flag_only
+    amount: flag_only
+    quantity: flag_only
+    sale_date: flag_only
+    category: fill_value
+  default_strategy: flag_only
+  fill_values:
+    category: "No category"
+
+validation:
+  # Values outside the range go to manual review (they are not deleted).
+  ranges:
+    amount: {min: 0, max: 5000000}
+    quantity: {min: 0, max: 100}
+
+output:
+  suffix: "_clean"

@@ -1,0 +1,79 @@
+# ============================================================
+# Config: NOBO shareholder lists (AIM Nexus, UC1)
+# ============================================================
+# Works for the 3 formats received so far: CSV with a header block (cp1252),
+# Excel .xls with the same layout, and the NOBO-OP extract (no header block, no totals).
+
+input:
+  encoding: "utf-8"            # if it fails, cp1252 / latin-1 are tried automatically
+  delimiter: ","
+  header_keyword: "SHARES"     # the header row is the one with a cell that says "SHARES"
+  body_ends_at_blank_row: true # after the data come control totals and the broker table
+
+columns:
+  number_format: "us"          # 3,175,000.50  (NOT "es": it corrupts the amounts)
+  trim_whitespace: true
+  rename:
+    "1ST LINE OF NAME & ADDRESS": line_1
+    "2ND LINE OF NAME & ADDRESS": line_2
+    "3RD LINE OF NAME & ADDRESS": line_3
+    "4TH LINE OF NAME & ADDRESS": line_4
+    "5TH LINE OF NAME & ADDRESS": line_5
+    "6TH LINE OF NAME & ADDRESS": line_6
+    "7TH LINE OF NAME & ADDRESS": line_7
+    "1ST LINE OF NAME ADDRESS": line_1      # NOBO-OP variant (no "&")
+    "2ND LINE OF NAME ADDRESS": line_2
+    "3RD LINE OF NAME ADDRESS": line_3
+    "4TH LINE OF NAME ADDRESS": line_4
+    "5TH LINE OF NAME ADDRESS": line_5
+    "ZIP CODE FOR SORTING": zip_sort
+    "SHARES": shares
+    "CUSIP": cusip
+  types:
+    shares: float
+    zip_sort: string
+    cusip: string
+  zfill:
+    cusip: 9
+
+duplicates:
+  subset: null                 # null = all columns (fully identical row)
+  keep: "first"
+  action: "flag"               # NOT removed: the broker counts them as separate accounts
+
+missing_values:
+  strategy:
+    shares: flag_only
+    line_1: flag_only
+  default_strategy: ignore     # lines 2-7, zip and cusip are often empty
+
+validation:
+  ranges:
+    shares: {min: 0.000001, max: 100000000}   # 0 or negative -> manual review
+
+address_parsing:
+  line_columns: [line_1, line_2, line_3, line_4, line_5, line_6, line_7]
+  home_country: "UNITED STATES"
+
+reconciliation:
+  count_label: "# OF NOBOS"
+  sum_label: "NUMBER OF SHARES"
+  sum_column: shares
+  broker_count_column: "NUMBER OF NOBOS"
+  tolerance: 0.01
+
+collation:
+  value_column: shares
+  issuer_field: "ISSUER NAME"
+
+output:
+  suffix: "_clean"
+
+# ------------------------------------------------------------
+# Monthly deliverable (run_monthly.py)
+# ------------------------------------------------------------
+deliverable:
+  # Files with no issuer in their header can be assigned one by file name pattern.
+  # Leave empty until the client confirms (e.g. what NOBO-OP is).
+  issuer_overrides: {}
+  #   "nobo-op*.csv": "NIAGEN BIOSCIENCE INC."

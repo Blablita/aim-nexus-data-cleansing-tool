@@ -1,0 +1,24 @@
+# Client / investor data -- never commit, local and QA data stays on this computer only
+inbox/
+deliverables/
+qa/
+master/
+output_example/
+output_nobo/
+output_notebook/
+reference/
+_archive_milestone2_spanish/
+sample_data/*.xlsx
+sample_data/*.xls
+
+# Python
+__pycache__/
+*.pyc
+*.bak_*
+
+# Local-only app settings (kept out so Streamlit Cloud uses its own server/theme defaults)
+.streamlit/config.toml
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
