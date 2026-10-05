@@ -350,7 +350,16 @@ def parse_lines(raw_lines):
             "account_type": account_type(lines)}
 
 
+def _as_str(value):
+    """Pandas gives missing values as None or float('nan') -- both are truthy in plain Python
+    (`not float('nan')` is False), so `if not value` alone lets NaN slip through to .upper()/slicing
+    and crash. This normalizes anything that isn't an actual string to "".
+    """
+    return value if isinstance(value, str) else ""
+
+
 def _normalize_name(name):
+    name = _as_str(name)
     if not name:
         return ""
     n = re.sub(r"[^A-Z0-9& ]", " ", name.upper())
@@ -364,10 +373,13 @@ def holder_key(row):
     name = _normalize_name(row["holder_name"])
     if not name:
         return None
-    if row["country"] == "UNITED STATES" and row["postal_code"]:
-        loc = row["postal_code"][:5]
+    country = _as_str(row["country"])
+    postal = _as_str(row["postal_code"])
+    city = _as_str(row["city"])
+    if country == "UNITED STATES" and postal:
+        loc = postal[:5]
     else:
-        loc = f"{row['country'] or ''}|{(row['postal_code'] or row['city'] or '').upper()}"
+        loc = f"{country}|{(postal or city).upper()}"
     return f"{name}|{loc}"
 
 
