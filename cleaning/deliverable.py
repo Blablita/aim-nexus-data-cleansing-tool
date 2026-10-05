@@ -238,7 +238,7 @@ def build(month, results, prev_investors, collation_cfg, overrides=None, registr
     has_copies = accounts["identical_to_other_account"]
     if has_copies.any():
         key_cols = [c for c in ["source_file", "shares"] + line_cols + ["zip_sort", "cusip"] if c in accounts.columns]
-        keys = accounts.loc[has_copies, key_cols].astype(str).agg("|".join, axis=1)
+        keys = accounts.loc[has_copies, key_cols].fillna("").astype(str).agg("|".join, axis=1)
         accounts.loc[has_copies, "identical_group_id"] = (pd.factorize(keys)[0] + 1).astype(str)
         accounts.loc[has_copies, "identical_copies"] = \
             accounts.loc[has_copies, "dup_copies"].fillna(1).astype(int) - 1
