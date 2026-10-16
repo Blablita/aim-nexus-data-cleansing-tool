@@ -12,7 +12,7 @@ import pandas as pd
 
 
 def investor_id(holder_key):
-    """Stable ID for an investor: the same holder_key gives the same ID every month."""
+    """Stable ID for an investor: the same holder_key gives the same ID in every run."""
     if not isinstance(holder_key, str) or not holder_key:
         return None
     return str(int(hashlib.sha1(holder_key.encode("utf-8")).hexdigest()[:10], 16))

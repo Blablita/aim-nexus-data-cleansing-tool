@@ -22,3 +22,6 @@ __pycache__/
 # OS / editor noise
 .DS_Store
 Thumbs.db
+
+# Working notes with real holder names (repo is public)
+RULES/

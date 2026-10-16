@@ -1,13 +1,14 @@
-"""Builds the monthly client deliverable (the clean, sellable database).
+"""Builds the client deliverable of one run (the clean, sellable database). A run = one dataset,
+identified by its run date (YYYY-MM-DD); target: one dataset per week.
 
-The deliverable has a FIXED layout that does not change between months, and only
+The deliverable has a FIXED layout that does not change between runs, and only
 buyer-facing columns (no internal/debug columns). Sheets:
 
     Summary            one row per issuer: accounts, investors, control totals, changes
     Investors          one row per unique investor per issuer  (main product)
     Original_Database  every row of the original file, cleaned, linked by investor_id
     Manual_Verification rows that need a person to decide, with a status column
-    Exited_Investors   investors present last month but not this month
+    Exited_Investors   investors in the previous list of the same issuer but not in this one
     Data_Dictionary    definition of every column
 """
 
@@ -18,13 +19,15 @@ import pandas as pd
 
 from .address import account_category, classify_entity, holder_key as make_holder_key
 from .collate import collate
+from .contacts import add_client_columns
 from .registry import assign_ids
 from .verification import apply_decisions, build_sheet
 
 # Internal name -> name shown in the client file
 RENAME = {"issuer": "issuer_name", "cusip": "CUSIP", "job_number": "Job_number",
           "postal_code": "ZIP Code/Postal Code",
-          "holder_extra_lines": "notes"}   # extra registration lines are kept, not deleted (client 2026-10-02)  # buyers are US-based (client feedback 2026-09-29)
+          "holder_extra_lines": "notes",
+          "custodian": "Custodian", "type_of_account": "Type of Account"}   # names as in the client's example (2026-10-15)   # extra registration lines are kept, not deleted (client 2026-10-02)  # buyers are US-based (client feedback 2026-09-29)
 
 # Duplicates are KEPT (client decision 2026-10-02): the same holder can appear several times because
 # of different account types. duplicate_status explains each case.
@@ -41,30 +44,48 @@ IDENTICAL_NOTE = ("Exact copy of another row of the same file (every column is t
 # Column order of the client file (internal names; renamed with RENAME when written)
 INVESTOR_COLUMNS = [
     "record_date", "job_number", "cusip", "issuer", "investor_id", "total_shares", "n_accounts",
-    "holder_name", "street_address", "city", "state_province", "postal_code", "country", "is_international",
-    "data_quality", "change_vs_prev_month", "prev_month_shares", "shares_change",
-    "entity_type", "account_types", "account_categories", "notes", "identical_copies", "id_match_method",
+    "holder_name", "primary_contact", "secondary_contact", "street_address", "city", "state_province",
+    "postal_code", "country", "type_of_account", "custodian", "is_international",
+    "data_quality", "change_vs_previous_list", "previous_record_date", "previous_shares", "shares_change",
+    "type", "entity_type", "account_types", "account_categories", "notes", "identical_copies", "id_match_method",
     "id_match_confidence", "address_changed",
 ]
 ACCOUNT_COLUMNS = [
     "record_date", "job_number", "cusip", "issuer", "investor_id", "shares", "holder_name",
-    "holder_extra_lines", "street_address", "city", "state_province", "postal_code", "country",
-    "is_international", "data_quality", "entity_type", "account_type", "account_category",
+    "primary_contact", "secondary_contact", "holder_extra_lines", "street_address", "city", "state_province",
+    "postal_code", "country", "type_of_account", "custodian",
+    "is_international", "data_quality", "type", "entity_type", "account_type", "account_category",
     "account_number", "duplicate_status", "identical_group_id", "identical_copies", "parsing_notes",
     "original_lines", "source_file", "source_row", "verification_id",
 ]
 IDENTICAL_COLUMNS = [c for c in ACCOUNT_COLUMNS if c not in ("account_number", "duplicate_status", "identical_copies",
                                                              "verification_id")] + ["validation_status", "validation_note"]
-ID_COLUMNS = ["investor_id", "identical_group_id"]
+ID_COLUMNS = ["identical_group_id"]      # investor_id is a 9-digit code kept as text (client 2026-10-15)
 
 DATA_DICTIONARY = [
     ("record_date", "Record date of the NOBO list (YYYY-MM-DD), from the file header."),
     ("Job_number", "Job number of the NOBO list request, from the file header."),
     ("CUSIP", "9-character CUSIP of the security, from the file header."),
     ("issuer_name", "Company whose shares are held, from the file header (or config issuer_overrides)."),
-    ("investor_id", "Permanent investor ID, numbers only (1, 2, 3...), assigned the first time the investor appears and kept in "
-                    "the investor registry. It does not change when the investor moves. One ID per investor per issuer."),
-    ("id_match_method", "How this month's row was linked to the registry: manual (confirmed by a person), exact (same "
+    ("investor_id", "Permanent investor ID: 9 digits, numbers only, stored as text, assigned at random (not in sequence) "
+                    "the first time the investor appears and kept in the investor registry. It does not change when "
+                    "the investor moves. One ID per investor per issuer."),
+    ("type", "Holder type: individual (a person, a joint account, a personal trust or a person's custodial/IRA "
+             "account), corporate (a company investing its own money, including family holding companies), "
+             "institutional (a professional investor or intermediary: fund, asset manager, bank, broker, pension, "
+             "insurance, foundation, endowment, omnibus/nominee account) or unknown. See the Account_Types sheet."),
+    ("primary_contact", "The person on the account, for individual holders only (empty for corporate, institutional "
+                        "and unknown). The holder name without registration words: 'ANNA M SAMPLE TOD' -> KRISTINA "
+                        "SEGURA, 'ROBERT T SAMPLE TTEE' -> ROBERT T SAMPLE. Empty when the registration names no person "
+                        "(for example 'ATC AS CUST FOR IRA' or 'SMITH FAMILY TRUST')."),
+    ("secondary_contact", "Second person on the account (joint holder), from the holder name ('J DOE & L DOE "
+                          "TTEE') or from an extra registration line ('MARY Q EXAMPLE', 'JANE R SAMPLE JT TEN')."),
+    ("Custodian", "Broker or bank holding the account as custodian, from the text before CUST / CUSTODIAN / C/F: "
+                  "'CHARLES SCHWAB & CO INC CUST' -> CHARLES SCHWAB & CO INC. In Investors: all custodians of the "
+                  "investor's accounts, separated by ' ; '."),
+    ("Type of Account", "Account description exactly as written in the file ('ROTH CONTRIBUTORY IRA', 'IRA ROLLOVER', "
+                        "'DESIGNATED BENE PLAN/TOD', 'JT TEN'). The standard code is in account_type."),
+    ("id_match_method", "How this run's row was linked to the registry: manual (confirmed by a person), exact (same "
                         "name + street + postal code), strong (same name + same postal code or same street), "
                         "probable_move (same name and same shares, new address), new (first time seen)."),
     ("id_match_confidence", "confirmed / high / medium / new, from id_match_method."),
@@ -76,8 +97,9 @@ DATA_DICTIONARY = [
                    "investor. total_shares is the sum of those accounts. An account can hold 0 shares on the record date."),
     ("shares", "(Original_Database sheet) Shares held in that one account, as reported in the NOBO list."),
     ("holder_name", "Name of the account holder (first name line of the registration)."),
-    ("notes", "Registration lines that are not the name or the address (co-holder, custodian, ATTN, C/O, account "
-              "description). Kept as they are for a later validation step. In Investors: the notes of all the "
+    ("notes", "Registration lines that are not the name or the address and that were not moved to secondary_contact, "
+              "Custodian or Type of Account (for example 'MSSB FBO ...', ATTN, C/O, trust dates, fund sub-account "
+              "labels). Kept as they are for a later validation step. In Investors: the notes of all the "
               "investor's accounts, separated by ' ; '."),
     ("parsing_notes", "(Original_Database sheet) What the parser had to assume to read the address (for example 'city "
                       "taken from the previous line'). Empty when the address was read directly."),
@@ -95,11 +117,13 @@ DATA_DICTIONARY = [
     ("corrected_* (Manual_Verification sheet)", "Optional columns where the reviewer writes the right name or address. "
                                                 "If left empty, a 'checked' row is accepted as it was parsed."),
     ("verification_id", "Key of a row in the Manual_Verification sheet. The same account always gets the same key."),
-    ("change_vs_prev_month", "FIRST MONTH (no earlier file to compare), NEW (not in last month's file), "
-                             "CONTINUING (also in last month's file) or EXITED (only in Exited_Investors: in last month's file, not in this one). "
-                             "Compared by issuer_name + investor_id."),
-    ("prev_month_shares", "total_shares in the previous month's file (empty for NEW and FIRST MONTH)."),
-    ("shares_change", "total_shares minus prev_month_shares (positive = bought, negative = sold)."),
+    ("change_vs_previous_list", "Compared with the previous list of the same issuer (the latest earlier record date, "
+                                "from any earlier run): FIRST LIST (no earlier list of this issuer), NEW (not in the "
+                                "previous list), CONTINUING (also in the previous list) or EXITED (only in Exited_Investors: "
+                                "in the previous list, not in this one). Compared by issuer_name + investor_id."),
+    ("previous_record_date", "Record date of the previous list of the same issuer used for the comparison."),
+    ("previous_shares", "total_shares in the previous list of the same issuer (empty for NEW and FIRST LIST)."),
+    ("shares_change", "total_shares minus previous_shares (positive = bought, negative = sold)."),
     ("entity_type", "Type of holder, from keywords in the holder name: nominee_custodian, trust, company_institution, "
                     "joint_individual, individual or unknown (see the Account_Types sheet for the rules)."),
     ("account_types", "Registration types found in any line of the investor's accounts (see the Account_Types sheet)."),
@@ -120,6 +144,9 @@ DATA_DICTIONARY = [
      "client to confirm whether the copy is a real separate account."),
     ("identical_rows_moved, shares_in_identical_rows", "(Summary sheet) Exact copies moved to Identical_Rows and the "
      "shares they hold. source_total_shares = total_shares + shares_in_identical_rows (matches the source file)."),
+    ("run_date (Summary sheet)", "Date of this run (one dataset). Target: one dataset per week."),
+    ("compared_with_run, previous_record_date (Summary sheet)", "Run and record date of the previous list of the same "
+     "issuer used for NEW / CONTINUING / EXITED. '-' when this is the first list of the issuer."),
     ("source_file, source_row", "(Original_Database sheet) Original file and row number, for traceability."),
 ]
 
@@ -157,6 +184,10 @@ ACCOUNT_TYPE_GUIDE = [
     ("entity_type", "joint_individual", "Two or more people on the same account.", "'&' in the holder name, JT, WROS"),
     ("entity_type", "individual", "A person: none of the words above and at least two words in the name.", "-"),
     ("entity_type", "unknown", "No holder name, or a name that cannot be classified.", "-"),
+    ("type", "individual", "A person: entity_type individual, joint_individual or trust, or a nominee_custodian name that is one person's custodial/IRA account.", "ATC AS CUST FOR IRA, FMTC CUSTODIAN - IRA, <name> CUST FOR"),
+    ("type", "corporate", "A company investing its own money (company_institution without investment words), including family holding companies.", "INC, LLC, LTD, CORP, LP... without the words below; FAMILY"),
+    ("type", "institutional", "A professional investor or intermediary: fund, asset manager, bank, broker, pension, insurance, foundation, endowment, omnibus/nominee.", "FUND, ETF, CAPITAL, PARTNERS, INVESTMENT(S), ADVISORS, MANAGEMENT, ASSET, SECURITIES, BANK, PENSION, INSURANCE, FOUNDATION, FINANCIAL, BROKERS, NOMINEES, OMNIBUS, CEDE, DTC..."),
+    ("type", "unknown", "entity_type unknown (no name or a name that cannot be classified).", "-"),
 ]
 
 
@@ -167,7 +198,8 @@ def _account_types_sheet():
                                      for c, v in zip(g["column"], g["value"])])
     status = pd.DataFrame([("duplicate_status", k, "", v, "-") for k, v in DUPLICATE_STATUS.items()],
                           columns=g.columns)
-    return pd.concat([g, status], ignore_index=True)
+    # keyword lists are internal method: they live in the Data Requirements & Rules document, not in the client file
+    return pd.concat([g, status], ignore_index=True).drop(columns=["keywords searched"])
 
 
 def resolve_issuer(filename, metadata, overrides):
@@ -191,6 +223,10 @@ def normalize_record_date(value):
     return value or None
 
 
+def _join_unique(values):
+    return " ; ".join(dict.fromkeys(v for v in values if isinstance(v, str) and v))
+
+
 def _account_quality(df):
     q = pd.Series("complete", index=df.index)
     q[df["parse_status"] != "ok"] = "check address"
@@ -199,12 +235,13 @@ def _account_quality(df):
     return q
 
 
-def build(month, results, prev_investors, collation_cfg, overrides=None, registry=None, id_overrides=None,
+def build(run, results, prev_investors, collation_cfg, overrides=None, registry=None, id_overrides=None,
           manual_decisions=None):
     """
-    month:           "YYYY-MM"
+    run:             run date "YYYY-MM-DD" (older runs used "YYYY-MM")
     results:         list of dicts returned by pipeline.clean_file (one per input file)
-    prev_investors:  previous month's Investors table (DataFrame) or None
+    prev_investors:  for each issuer, the Investors rows of its previous list (any earlier run), with a
+                     `previous_run` column; DataFrame or None
     Returns: dict of DataFrames (sheet name -> table) + list of notes
     """
     notes = []
@@ -259,6 +296,11 @@ def build(month, results, prev_investors, collation_cfg, overrides=None, registr
     for i in fixed:
         accounts.at[i, "holder_key"] = make_holder_key(accounts.loc[i])
         accounts.at[i, "entity_type"] = classify_entity(accounts.at[i, "holder_name"], [])
+
+    # --- client columns: type, primary/secondary contact, Custodian, Type of Account (client 2026-10-15)
+    accounts = add_client_columns(accounts)
+    if len(identical):
+        identical = add_client_columns(identical)
     if any(vcounts.values()):
         notes.append("Manual verification: " + ", ".join(f"{k} {v:,}" for k, v in vcounts.items() if v))
 
@@ -267,7 +309,7 @@ def build(month, results, prev_investors, collation_cfg, overrides=None, registr
     for issuer, sub in accounts.groupby("issuer", sort=False):
         files = sorted(sub["source_file"].unique())
         if len(files) > 1:
-            notes.append(f"{issuer}: {len(files)} files in the same month ({', '.join(files)}). "
+            notes.append(f"{issuer}: {len(files)} files in the same run ({', '.join(files)}). "
                          f"If one is an extract of the other, accounts are counted twice.")
         inv, info = collate(sub, collation_cfg, " | ".join(files), issuer)
         inv["cusip"] = sub["cusip"].iloc[0]
@@ -277,7 +319,7 @@ def build(month, results, prev_investors, collation_cfg, overrides=None, registr
         verified_keys = set(sub.loc[sub["data_quality"] == "manually verified", "holder_key"].dropna())
         inv.loc[inv["holder_key"].isin(verified_keys), "data_quality"] = "manually verified"
         inv_tables.append(inv)
-        summary_rows.append({"month": month, "record_date": sub["record_date"].iloc[0],
+        summary_rows.append({"run_date": run, "record_date": sub["record_date"].iloc[0],
                              "job_number": sub["job_number"].iloc[0],
                              "cusip": inv["cusip"].iloc[0] if len(inv) else None, "issuer": issuer,
                              "source_files": " | ".join(files),
@@ -292,7 +334,7 @@ def build(month, results, prev_investors, collation_cfg, overrides=None, registr
     investors = pd.concat(inv_tables, ignore_index=True)
 
     # permanent investor IDs from the registry
-    investors, registry_out, review, id_counts = assign_ids(investors, month, registry, id_overrides)
+    investors, registry_out, review, id_counts = assign_ids(investors, run, registry, id_overrides)
     notes.append("Investor IDs: " + ", ".join(f"{k} {v:,}" for k, v in id_counts.items()))
 
     # link accounts to investor_id (same issuer + same holder_key)
@@ -313,48 +355,70 @@ def build(month, results, prev_investors, collation_cfg, overrides=None, registr
     per_inv = accounts.groupby(["issuer", "investor_id"]).agg(
         account_categories=("account_category", lambda x: ",".join(dict.fromkeys(",".join(x).split(",")))),
         identical_copies=("identical_copies", "sum"),
-        notes=("holder_extra_lines", lambda x: " ; ".join(dict.fromkeys(v for v in x if isinstance(v, str) and v))))
+        notes=("holder_extra_lines", _join_unique),
+        type=("type", "first"),
+        primary_contact=("primary_contact", lambda x: next((v for v in x if isinstance(v, str) and v), None)),
+        secondary_contact=("secondary_contact", lambda x: next((v for v in x if isinstance(v, str) and v), None)),
+        custodian=("custodian", _join_unique),
+        type_of_account=("type_of_account", _join_unique))
     idx = pd.MultiIndex.from_frame(investors[["issuer", "investor_id"]])
     investors["account_categories"] = per_inv["account_categories"].reindex(idx).values
     investors["identical_copies"] = per_inv["identical_copies"].reindex(idx).fillna(0).astype(int).values
-    investors["notes"] = per_inv["notes"].reindex(idx).replace("", None).values
+    for col in ("notes", "type", "primary_contact", "secondary_contact", "custodian", "type_of_account"):
+        investors[col] = per_inv[col].reindex(idx).replace("", None).values
     identical["investor_id"] = [key_to_id.get((i, k)) for i, k in zip(identical["issuer"], identical["holder_key"])]
     identical = identical.sort_values(["identical_group_id", "shares"], kind="stable")
 
-    # --- month over month
+    # --- comparison with the previous list of the SAME issuer (it can come from any earlier run: with one
+    # dataset per week, the previous list of an issuer is often several runs back)
     exited = pd.DataFrame(columns=INVESTOR_COLUMNS + ["holder_key"])
+    investors["change_vs_previous_list"] = "FIRST LIST"
+    investors["previous_record_date"] = None
+    investors["previous_shares"] = None
+    investors["shares_change"] = None
+    for s in summary_rows:
+        s.update(compared_with_run="-", previous_record_date="-", new_investors=None, continuing_investors=None,
+                 exited_investors=None)
     if prev_investors is not None and len(prev_investors):
         prev_investors = prev_investors.rename(columns={v: k for k, v in RENAME.items()})
+        prev_investors = prev_investors[prev_investors["issuer"].isin(set(investors["issuer"]))]
+    if prev_investors is not None and len(prev_investors):
         prev = prev_investors.set_index(["issuer", "investor_id"])["total_shares"]
-        idx = pd.MultiIndex.from_frame(investors[["issuer", "investor_id"]])
-        investors["prev_month_shares"] = prev.reindex(idx).values
-        investors["change_vs_prev_month"] = investors["prev_month_shares"].map(lambda v: "NEW" if pd.isna(v) else "CONTINUING")
-        investors["shares_change"] = investors["total_shares"] - investors["prev_month_shares"]
+        prev_date = prev_investors.groupby("issuer")["record_date"].first()
+        has_prev = investors["issuer"].isin(set(prev_investors["issuer"]))
+        idx = pd.MultiIndex.from_frame(investors.loc[has_prev, ["issuer", "investor_id"]])
+        investors.loc[has_prev, "previous_shares"] = prev.reindex(idx).values
+        investors.loc[has_prev, "previous_record_date"] = investors.loc[has_prev, "issuer"].map(prev_date)
+        investors.loc[has_prev, "change_vs_previous_list"] = investors.loc[has_prev, "previous_shares"].map(
+            lambda v: "NEW" if pd.isna(v) else "CONTINUING")
+        investors["previous_shares"] = pd.to_numeric(investors["previous_shares"], errors="coerce")
+        investors["shares_change"] = investors["total_shares"] - investors["previous_shares"]
         cur_keys = set(zip(investors["issuer"], investors["investor_id"]))
-        # only issuers that are present this month can have "exited" investors
-        issuers_now = set(investors["issuer"])
-        mask = [((i, v) not in cur_keys) and (i in issuers_now)
-                for i, v in zip(prev_investors["issuer"], prev_investors["investor_id"])]
-        exited = prev_investors[mask].copy()
-        exited["change_vs_prev_month"] = "EXITED"
-        exited["prev_month_shares"] = exited["total_shares"]
+        mask = [(i, v) not in cur_keys for i, v in zip(prev_investors["issuer"], prev_investors["investor_id"])]
+        exited = prev_investors.loc[pd.Series(mask, index=prev_investors.index, dtype=bool)].copy()
+        exited["change_vs_previous_list"] = "EXITED"
+        exited["previous_record_date"] = exited["record_date"]
+        exited["previous_shares"] = exited["total_shares"]
         exited["shares_change"] = -exited["total_shares"]
         exited["total_shares"] = 0
+        prev_run = prev_investors.groupby("issuer")["previous_run"].first() if "previous_run" in prev_investors else {}
         for s in summary_rows:
+            if s["issuer"] not in prev_date.index:
+                continue
             sub = investors[investors["issuer"] == s["issuer"]]
-            s["new_investors"] = int((sub["change_vs_prev_month"] == "NEW").sum())
+            s["compared_with_run"] = prev_run.get(s["issuer"], "-")
+            s["previous_record_date"] = prev_date[s["issuer"]]
+            s["new_investors"] = int((sub["change_vs_previous_list"] == "NEW").sum())
             s["exited_investors"] = int((exited["issuer"] == s["issuer"]).sum())
-            s["continuing_investors"] = int((sub["change_vs_prev_month"] == "CONTINUING").sum())
-    else:
-        investors["change_vs_prev_month"] = "FIRST MONTH"
-        investors["prev_month_shares"] = None
-        investors["shares_change"] = None
-        notes.append("No previous month deliverable found: month-over-month changes start next month.")
+            s["continuing_investors"] = int((sub["change_vs_previous_list"] == "CONTINUING").sum())
+    first = [s["issuer"] for s in summary_rows if s["compared_with_run"] == "-"]
+    if first:
+        notes.append("First list of " + ", ".join(first) + ": changes are shown from the next list of the same issuer.")
 
     investors = investors.sort_values("total_shares", ascending=False, kind="stable")
     accounts = accounts.sort_values("shares", ascending=False, kind="stable")
     if len(exited):
-        exited = exited.sort_values("prev_month_shares", ascending=False, kind="stable")
+        exited = exited.sort_values("previous_shares", ascending=False, kind="stable")
     manual_sheet = build_sheet(accounts, manual_decisions)
     sheets = {
         "Summary": pd.DataFrame(summary_rows).rename(columns=RENAME),
@@ -367,6 +431,9 @@ def build(month, results, prev_investors, collation_cfg, overrides=None, registr
         "Account_Types": _account_types_sheet(),
     }
     for name in ("Investors", "Original_Database", "Identical_Rows", "Exited_Investors"):
+        if "investor_id" in sheets[name].columns:     # 9-digit text code
+            sheets[name]["investor_id"] = sheets[name]["investor_id"].map(
+                lambda v: None if v is None or (isinstance(v, float) and pd.isna(v)) else str(v))
         for col in ID_COLUMNS:
             if col in sheets[name].columns:          # numbers only, so Excel shows them as numbers
                 sheets[name][col] = pd.to_numeric(sheets[name][col], errors="coerce").astype("Int64")

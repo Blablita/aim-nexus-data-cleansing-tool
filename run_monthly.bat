@@ -1,9 +1,9 @@
 @echo off
 REM ============================================================
-REM  MONTHLY RUN: inbox\<month>  ->  deliverables\<month>
-REM  1. Create a folder inbox\YYYY-MM (e.g. inbox\2026-10)
-REM  2. Put the month's raw files in it
-REM  3. Double-click this file (it processes the latest month)
+REM  ONE RUN PER DATASET: inbox\<run date>  ->  deliverables\<run date>
+REM  1. Create a folder inbox\YYYY-MM-DD with the run date (e.g. inbox\2026-10-16)
+REM  2. Put the dataset's raw files in it
+REM  3. Double-click this file (it processes the latest run folder)
 REM ============================================================
 cd /d "%~dp0"
 
@@ -16,7 +16,7 @@ if not defined PY if exist "C:\ProgramData\anaconda3\python.exe" set "PY=C:\Prog
 if not defined PY if exist "%USERPROFILE%\miniconda3\python.exe" set "PY=%USERPROFILE%\miniconda3\python.exe"
 if not defined PY (
   echo Python was not found. Open "Anaconda Prompt", go to this folder and run:
-  echo   python run_monthly.py
+  echo   python run_cleaning.py
   pause
   exit /b 1
 )
@@ -26,7 +26,7 @@ echo Using Python: %PY%
 echo Checking required packages...
 %PYQ% -m pip install -r requirements.txt --quiet --disable-pip-version-check
 
-%PYQ% run_monthly.py %*
+%PYQ% run_cleaning.py %*
 
 echo.
 echo Client file: deliverables folder.   Internal QA: qa folder.

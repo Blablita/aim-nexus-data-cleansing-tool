@@ -1,14 +1,14 @@
 """
 AIM Nexus Data Cleansing Tool - local web app (Streamlit).
 
-Upload the month's raw files, click Run, review the Summary and download the
-clean database. The app calls run_monthly.py, so the cleaning logic lives in one place.
+Upload one dataset's raw files, click Run, review the Summary and download the
+clean database. Each run is identified by its run date (YYYY-MM-DD). The app calls run_cleaning.py, so the cleaning logic lives in one place.
 
 Start it with run_app.bat (double-click), or:
     python -m streamlit run app.py
 
-Everything runs on this computer: files are saved to inbox/<month>/ and the results
-go to deliverables/<month>/ and qa/<month>/, exactly like run_monthly.bat.
+Everything runs on this computer: files are saved to inbox/<run date>/ and the results
+go to deliverables/<run date>/ and qa/<run date>/, exactly like run_cleaning.bat.
 """
 
 import io
@@ -29,10 +29,10 @@ BASE = os.environ.get("TOOLKIT_BASE", HERE)
 INBOX = os.path.join(BASE, "inbox")
 DELIV = os.path.join(BASE, "deliverables")
 QA = os.path.join(BASE, "qa")
-RUN_SCRIPT = os.path.join(HERE, "run_monthly.py")
+RUN_SCRIPT = os.path.join(HERE, "run_cleaning.py")
 
 SUPPORTED = ["csv", "txt", "xls", "xlsx", "xlsm"]
-MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?$")   # run date YYYY-MM-DD (YYYY-MM = older runs)
 
 
 # ---------------------------------------------------------------- helpers
@@ -70,7 +70,7 @@ def safe_name(name):
 
 
 def move_old_inbox_files(month_dir):
-    """Moves files already in inbox/<month>/ to a _replaced_<time> subfolder (nothing is deleted)."""
+    """Moves files already in inbox/<run date>/ to a _replaced_<time> subfolder (nothing is deleted)."""
     old = files_in(month_dir)
     if not old:
         return None
@@ -113,8 +113,8 @@ def zip_folder(files):
 
 
 def run_pipeline(month, config_path, log_box):
-    """Runs run_monthly.py and streams its output into the page. Returns (exit_code, output)."""
-    cmd = [sys.executable, "-u", RUN_SCRIPT, "--month", month, "--config", config_path,
+    """Runs run_cleaning.py and streams its output into the page. Returns (exit_code, output)."""
+    cmd = [sys.executable, "-u", RUN_SCRIPT, "--run-date", month, "--config", config_path,
            "--base", BASE, "--quiet"]
     env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
     lines = []
@@ -163,14 +163,15 @@ if not check_password():
     st.stop()
 
 st.title("AIM Nexus Data Cleansing Tool")
-st.caption("Upload the month's raw files, click **Run**, then download the clean database. "
+st.caption("Upload one dataset's raw files, pick the run date, click **Run**, then download the clean database. "
            "Test version: files are not kept permanently between sessions yet.")
 
 # sidebar: settings and history
 with st.sidebar:
     st.header("Settings")
-    month = st.text_input("Month (YYYY-MM)", value=date.today().strftime("%Y-%m"),
-                          help="The record month of the files. Results go to deliverables/<month>/.").strip()
+    month = st.text_input("Run date (YYYY-MM-DD)", value=date.today().strftime("%Y-%m-%d"),
+                          help="The date of this run (one dataset). Results go to deliverables/<run date>/. "
+                               "Each issuer is compared with its previous list.").strip()
     configs = sorted(f for f in os.listdir(HERE) if f.lower().endswith((".yaml", ".yml")))
     default_cfg = configs.index("config_nobo.yaml") if "config_nobo.yaml" in configs else 0
     config_name = st.selectbox("Configuration", configs, index=default_cfg) if configs else None
@@ -182,11 +183,11 @@ with st.sidebar:
         for m in reversed(done):
             st.write(f"• {m}")
     else:
-        st.write("No months delivered yet.")
+        st.write("No runs delivered yet.")
 
 month_ok = bool(MONTH_RE.match(month))
 if not month_ok:
-    st.error("Month must look like 2026-10.")
+    st.error("Run date must look like 2026-10-16.")
     st.stop()
 if not config_name:
     st.error("No configuration file (.yaml) found next to app.py.")
@@ -201,7 +202,7 @@ later_months = [m for m in delivered if m > month]
 # ---------------------------------------------------------------- step 1: files
 
 st.subheader("1. Files")
-uploads = st.file_uploader("Raw files for this month (.csv, .txt, .xls, .xlsx, .xlsm)",
+uploads = st.file_uploader("Raw files for this run (.csv, .txt, .xls, .xlsx, .xlsm)",
                            type=SUPPORTED, accept_multiple_files=True)
 
 use_existing = False
@@ -217,9 +218,9 @@ if existing_inbox:
                 f"inbox/{month}/: {names}")
 
 if later_months:
-    st.warning(f"Later months are already delivered ({', '.join(later_months)}). Investor IDs and the "
-               f"month-over-month comparison assume months are run in order. Run {month} only if you "
-               f"are re-running an old month on purpose.")
+    st.warning(f"Later runs are already delivered ({', '.join(later_months)}). Investor IDs and the "
+               f"comparison with previous lists assume datasets are run in date order. Run {month} only if "
+               f"you are re-running an old run on purpose.")
 if month in delivered:
     st.warning(f"{month} was already delivered. Running again will replace the files in "
                f"deliverables/{month}/. If one of them is open in Excel, the new version is saved with a "
@@ -244,7 +245,7 @@ if st.button("Run", type="primary", disabled=not can_run):
         try:
             code, output = run_pipeline(month, os.path.join(HERE, config_name), log_box)
         except Exception as e:  # e.g. Python could not start the script
-            code, output = 1, f"Could not start run_monthly.py: {e}"
+            code, output = 1, f"Could not start run_cleaning.py: {e}"
             log_box.code(output, language=None)
         if code == 0:
             status.update(label=f"{month} processed.", state="complete", expanded=False)

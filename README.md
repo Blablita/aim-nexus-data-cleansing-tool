@@ -4,25 +4,27 @@ Flexible, reusable toolkit to clean and organize client CSV/Excel files. The cod
 
 Current use: AIM Nexus, UC1 (Data PreProcessing Automation), NOBO shareholder lists.
 
-## Monthly run (how the client uses it)
+## One run per dataset (how the client uses it)
 
-1. Create a folder for the month inside `inbox`, named `YYYY-MM` (for example `inbox\2026-10`).
-2. Put that month's raw files in it (`.csv`, `.xls`, `.xlsx`).
-3. Double-click **`run_monthly.bat`** (it takes the latest month in `inbox`).
+Target: one dataset processed per week. Each run is identified by its **run date** (`YYYY-MM-DD`), so several datasets can be processed in the same month without overwriting each other.
+
+1. Create a folder for the run inside `inbox`, named with the run date (for example `inbox\2026-10-16`).
+2. Put that dataset's raw files in it (`.csv`, `.xls`, `.xlsx`).
+3. Double-click **`run_cleaning.bat`** (it takes the latest run folder in `inbox`), or use the front end (`run_app.bat`).
 
 Result:
 
 | Folder | Content | Audience |
 |---|---|---|
-| `deliverables\2026-10\` | `clean_database_2026-10.xlsx` (Summary, Investors, Accounts, Exited_Investors, Data_Dictionary) + `investors_2026-10.csv` + `original_database_2026-10.csv` | Client / buyer |
-| `qa\2026-10\` | quality report, manual review files, per-file clean files, run log | Internal |
+| `deliverables\2026-10-16\` | `clean_database_2026-10-16.xlsx` (Summary, Investors, Original_Database, Identical_Rows, Manual_Verification, Exited_Investors, Data_Dictionary, Account_Types) + `investors_2026-10-16.csv` + `original_database_2026-10-16.csv` | Client / buyer |
+| `qa\2026-10-16\` | quality report, manual review files, per-file clean files, run log | Internal |
 
-- The deliverable has a fixed layout every month.
-- **Investor IDs** are permanent (INV-000001...) and stored in `master\investor_registry.csv`. Each month, investors are matched to the registry: manual (from `master\id_overrides.csv`), exact (name + street + postal code), strong (name + postal code, or name + street), probable_move (same name and shares, new address), otherwise new. Unsure cases go to `qa\<month>\id_review_<month>.csv`. To link one, add a line to `master\id_overrides.csv` (issuer_name, holder_name, postal_code, investor_id, note) and run the month again. A registry snapshot is kept before each month, so re-running a month gives the same IDs. Run months in order.
+- The deliverable has a fixed layout in every run. The full rules are in `UC1_Data_Requirements_and_Rules.docx`.
+- **Investor IDs** are permanent 9-digit codes (numbers only, kept as text, not in sequence) and stored in `master\investor_registry.csv`. IDs from earlier runs (1, 2, 3...) are converted once; the old -> new pairs are kept in `master\id_migration.csv` (do not delete it). In each run, investors are matched to the registry: manual (from `master\id_overrides.csv`), exact (name + street + postal code), strong (name + postal code, or name + street), probable_move (same name and shares, new address), otherwise new. Unsure cases go to `qa\<run date>\id_review_<run date>.csv`. To link one, add a line to `master\id_overrides.csv` (issuer_name, holder_name, postal_code, investor_id, note) and run it again. A registry snapshot is kept before each run, so re-running a run gives the same IDs. Run datasets in date order.
 - If the Excel file is open while running, a copy with a time stamp is saved instead. Close Excel and run again.
-- From the second month on, each investor is marked `NEW` or `CONTINUING` with `shares_change`, and investors who left are listed in `Exited_Investors`.
+- Each issuer is compared with **its previous list** (the latest earlier run that has the same issuer, which can be several runs back): each investor is marked `FIRST LIST`, `NEW` or `CONTINUING` with `previous_record_date`, `previous_shares` and `shares_change`, and investors who left are listed in `Exited_Investors`.
 - `control_totals` in the Summary sheet must say `OK` before the file is delivered. `CHECK` means the rows or shares do not match the totals printed in the raw file.
-- To run a specific month: `run_monthly.bat --month 2026-10` (from a command window) or `python run_monthly.py --month 2026-10`.
+- To run a specific date: `run_cleaning.bat --run-date 2026-10-16` (from a command window) or `python run_cleaning.py --run-date 2026-10-16`. The old commands (`run_monthly.bat`, `--month`) still work; older run folders named `YYYY-MM` are still read.
 - The Investors sheet is sorted by `total_shares`, largest first. `reference\\NOBO-OP_client_example.csv` is the example of what the client wants to see; it is not an input file.
 - Files with no issuer in their header show as `UNKNOWN ISSUER`. Assign one in `config_nobo.yaml` under `deliverable: issuer_overrides` once the client confirms it.
 
@@ -89,17 +91,17 @@ For the whole run:
 
 ```
 data_cleaning_toolkit/
-├── run_monthly.bat         # double-click: monthly run (inbox -> deliverables)
-├── run_monthly.py          # monthly run script
+├── run_cleaning.bat        # double-click: one run (inbox/<run date> -> deliverables/<run date>)
+├── run_cleaning.py         # run script (run_monthly.* kept for older commands)
 ├── run_nobo.bat            # one-off run on the files in the folder above
 ├── clean.py                # command line entry point (one-off runs)
-├── inbox/ deliverables/ qa/   # monthly folders (created automatically)
+├── inbox/ deliverables/ qa/   # one folder per run date (created automatically)
 ├── config_nobo.yaml        # config for the AIM Nexus NOBO lists
 ├── config_example.yaml     # template / demo config
 ├── notebook_example.ipynb  # same flow, step by step, in Jupyter
 ├── cleaning/               # the toolkit itself
 │   ├── io_utils.py  standardize.py  dedupe.py  missing.py  validate.py
-│   ├── address.py  geo_reference.py  collate.py  deliverable.py
+│   ├── address.py  contacts.py  geo_reference.py  collate.py  deliverable.py  registry.py
 │   ├── report.py  pipeline.py  config.py
 ├── sample_data/sales_example.csv   # small synthetic "dirty" file for testing
 └── requirements.txt
@@ -110,4 +112,4 @@ data_cleaning_toolkit/
 - Addresses are standardized with USPS abbreviations, but not validated against the USPS database: a missing directional (e.g. the 'W' in '4700 W TIETON DR') cannot be added without an address validation service.
 - Two street lines without house numbers can be split wrongly between name and street (see `parse_notes`).
 - NOBO-OP has no issuer in its header, so its overlap with the NIAGEN list shows up in `Cross_File` (see `n_issuers`).
-- If two files of the same issuer arrive in the same month and one is an extract of the other, accounts are counted twice (the run prints a NOTE).
+- If two files of the same issuer arrive in the same run and one is an extract of the other, accounts are counted twice (the run prints a NOTE).

@@ -38,14 +38,14 @@ RE_STREET_START = re.compile(
 
 # Words showing the holder is NOT an individual (checked on line 1 only)
 ENTITY_RULES = [
-    ("nominee_custodian", r"\bNOMINEES?\b|NOMINEES|\bOMNI(BUS)?\b|\bCEDE\b|\bFBO\b|\bCUST(ODIAN)?\b|\bC/F\b"),
+    ("nominee_custodian", r"\bNOMINEES?\b|NOMINEES|\bOMNI(BUS)?\b|\bCEDE\b|\bFBO\b|\bCUST(ODIAN)?\b|\bC/F\b|\bDTC\b"),
     ("trust", r"\bTRUST\b|\bTR\b|\bTTEES?\b|\bTRUSTEES?\b|\bTST\b|\bU/A\b|\bUAD\b|\bU/T/A\b|\bESTATE\b|\bREV\s+TR"),
     ("company_institution",
      r"\bL\.?L\.?C\b|\bINC\b|\bCORP\b|\bCORPORATION\b|\bCO\b|\bLTD\b|\bLIMITED\b|\bL\.?P\b|\bLLP\b|\bPLC\b|"
      r"\bGMBH\b|\bS\.?A\b|\bAG\b|\bB\.?V\b|\bN\.?V\b|\bFUND\b|\bFUNDS\b|\bETF\b|\bCAPITAL\b|\bPARTNERS\b|"
      r"\bHOLDINGS?\b|\bINVESTMENTS?\b|\bADVISORS?\b|\bADVISERS?\b|\bMANAGEMENT\b|\bSECURITIES\b|\bBANK\b|"
      r"\bFOUNDATION\b|\bFDNTN\b|\bASSOCIATION\b|\bCOUNTY\b|\bUNIVERSITY\b|\bGROUP\b|\bPENSION\b|\bPLANS?\b|"
-     r"\bFINANCIAL\b|\bVENTURES?\b|\bENTERPRISES?\b|\bSOCIETY\b|\bCHURCH\b|\bCOMPANY\b|\bAQR\b|\bLLC\b"),
+     r"\bFINANCIAL\b|\bVENTURES?\b|\bBANKING\b|\bBROKERS?\b|\bBROKERAGE\b|\bPTE\b|\bWEALTH\b|\bSTRATEGIES\b|\bASSOCIATES\b|\bPORTFOLIO\b|\bINDEXING\b|\bENTERPRISES?\b|\bSOCIETY\b|\bCHURCH\b(?=\s+\S)|\bCOMPANY\b|\bAQR\b|\bLLC\b"),
 ]
 ENTITY_RULES = [(label, re.compile(rx, re.I)) for label, rx in ENTITY_RULES]
 

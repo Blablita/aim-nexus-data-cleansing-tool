@@ -1,34 +1,39 @@
 """Investor ID registry: permanent IDs that survive address changes.
 
-Instead of calculating the ID from the name and ZIP every month (which changes when an
-investor moves), each investor gets a sequential ID the first time it appears
-(1, 2, 3 ...; numbers only, client request 2026-10-02). The ID is stored in master/investor_registry.csv together with
-the investor's latest name, address and shares. Every month, the new investors are matched
+Instead of calculating the ID from the name and ZIP in every run (which changes when an
+investor moves), each investor gets an ID the first time it appears: 9 digits, numbers only,
+stored as text and assigned at random, not in sequence (client request 2026-10-15; IDs from
+earlier runs are converted once, see migrate_ids and master/id_migration.csv). The ID is stored in master/investor_registry.csv together with
+the investor's latest name, address and shares. In every run (one dataset, identified by its run date)
+the investors are matched
 against the registry, from the surest rule to the least sure:
 
     1. manual         a decision saved in master/id_overrides.csv            (confirmed)
     2. exact          same name + same street + same ZIP5 / postal code      (high)
     3. strong         same name + same ZIP5, or same name + same street     (high)
     4. probable_move  same name, not matched by the rules above, the old address
-                      is not in this month's file, and the shares are the same
+                      is not in this run's file, and the shares are the same
                       (within 1%). Only when there is exactly one candidate and
                       the name is not common in the issuer's list.           (medium)
     5. new            no match: a new ID is created                          (new)
 
 Cases that look like a possible match but do not meet rule 4 (e.g. same name, different
-address, different shares) go to qa/<month>/id_review_<month>.csv. A person decides and,
+address, different shares) go to qa/<run>/id_review_<run>.csv. A person decides and,
 if they are the same investor, adds a line to master/id_overrides.csv; the next run
 respects it. The scope is one issuer: the same person in two issuers gets two IDs.
 """
 
 import os
 import re
+import hashlib
+import random
+import secrets
 
 import pandas as pd
 
 REGISTRY_COLUMNS = ["investor_id", "issuer_name", "holder_name", "name_key", "street_key", "loc_key",
                     "street_address", "city", "state_province", "postal_code", "country",
-                    "first_seen_month", "last_seen_month", "last_total_shares", "address_history"]
+                    "first_seen_run", "last_seen_run", "last_total_shares", "address_history"]
 OVERRIDE_COLUMNS = ["issuer_name", "holder_name", "postal_code", "investor_id", "note"]
 
 
@@ -75,7 +80,9 @@ def normalize_id(value):
 
 def load_registry(path):
     if os.path.isfile(path):
-        reg = pd.read_csv(path, dtype=str, keep_default_na=False).reindex(columns=REGISTRY_COLUMNS, fill_value="")
+        reg = pd.read_csv(path, dtype=str, keep_default_na=False)
+        reg = reg.rename(columns={"first_seen_month": "first_seen_run", "last_seen_month": "last_seen_run"})  # older files
+        reg = reg.reindex(columns=REGISTRY_COLUMNS, fill_value="")
         reg["investor_id"] = reg["investor_id"].map(normalize_id)
         return reg
     return pd.DataFrame(columns=REGISTRY_COLUMNS)
@@ -91,15 +98,65 @@ def load_overrides(path):
     return ov
 
 
-def _next_number(reg):
-    nums = reg["investor_id"].map(normalize_id).str.extract(r"^(\d+)$")[0].dropna().astype(int)
-    return (nums.max() + 1) if len(nums) else 1
+RE_ID = re.compile(r"^[1-9]\d{8}$")
+MIGRATION_COLUMNS = ["old_investor_id", "investor_id", "migrated_on"]
+
+
+def is_valid_id(value):
+    return isinstance(value, str) and bool(RE_ID.match(value))
+
+
+def new_id(taken, seed=None):
+    """Random-looking 9-digit ID (first digit 1-9 so no leading zero is lost), never one already in `taken`.
+    With a seed (issuer + name + location) the same investor gets the same ID when a run is repeated."""
+    rng = random.Random(int(hashlib.sha1(seed.encode()).hexdigest(), 16)) if seed else None
+    while True:
+        v = str((rng.randrange(900_000_000) if rng else secrets.randbelow(900_000_000)) + 100_000_000)
+        if v not in taken:
+            taken.add(v)
+            return v
+
+
+def load_id_map(path):
+    if os.path.isfile(path):
+        m = pd.read_csv(path, dtype=str, keep_default_na=False, encoding="utf-8-sig")
+        return dict(zip(m["old_investor_id"].map(normalize_id), m["investor_id"]))
+    return {}
+
+
+def migrate_ids(registry, path, run):
+    """One-time conversion of old IDs (1, 2, 3... or INV-000123) to 9-digit IDs. The old -> new pairs are
+    saved in master/id_migration.csv and reused, so a re-run or an old snapshot always gives the same new ID.
+    Returns (registry, id_map, number_of_new_conversions)."""
+    id_map = load_id_map(path)
+    reg = registry.copy()
+    taken = set(reg["investor_id"]) | set(id_map.values())
+    added = []
+    for old in reg["investor_id"]:
+        if old and not is_valid_id(old) and old not in id_map:
+            id_map[old] = new_id(taken)
+            added.append({"old_investor_id": old, "investor_id": id_map[old], "migrated_on": run})
+    if added:
+        rows = pd.DataFrame(added, columns=MIGRATION_COLUMNS)
+        if os.path.isfile(path):
+            rows = pd.concat([pd.read_csv(path, dtype=str, keep_default_na=False, encoding="utf-8-sig"), rows])
+        rows.to_csv(path, index=False, encoding="utf-8-sig")
+    reg["investor_id"] = reg["investor_id"].map(lambda v: map_id(v, id_map))
+    return reg, id_map, len(added)
+
+
+def map_id(value, id_map):
+    """Old ID -> new 9-digit ID (unchanged if it is already new or not in the map)."""
+    if value is None or (isinstance(value, float) and pd.isna(value)) or value == "":
+        return value
+    v = normalize_id(value)
+    return v if is_valid_id(v) else id_map.get(v, v)
 
 
 # ------------------------------------------------------------------ matching
-def assign_ids(investors, month, registry, overrides):
+def assign_ids(investors, run, registry, overrides):
     """
-    investors: this month's Investors table (one row per investor per issuer, internal column names:
+    investors: this run's Investors table (one row per investor per issuer, internal column names:
                issuer, holder_name, street_address, city, state_province, postal_code, country, total_shares)
     Returns: (investors with investor_id / id_match_method / id_match_confidence / address_changed,
               updated registry, review DataFrame, counts dict)
@@ -113,8 +170,8 @@ def assign_ids(investors, month, registry, overrides):
     inv["address_changed"] = False
 
     reg = registry.copy()
-    next_no = _next_number(reg)
-    used = set()                     # registry IDs already matched this month
+    taken = set(reg["investor_id"].dropna()) | set(ov_ids for ov_ids in overrides["investor_id"] if ov_ids)
+    used = set()                     # registry IDs already matched in this run
     review = []
 
     # 1) manual decisions
@@ -190,12 +247,12 @@ def assign_ids(investors, month, registry, overrides):
                         "postal_code": inv.at[i, "postal_code"], "total_shares": inv.at[i, "total_shares"],
                         "candidate_investor_id": r.investor_id, "candidate_street": r.street_address,
                         "candidate_city": r.city, "candidate_postal_code": r.postal_code,
-                        "candidate_last_shares": r.last_total_shares, "candidate_last_seen": r.last_seen_month,
+                        "candidate_last_shares": r.last_total_shares, "candidate_last_seen": r.last_seen_run,
                         "why_not_linked": ("common name" if n in common else
                                            "shares differ" if not close else "more than one candidate"),
                     })
 
-    # same name already registered at another address, and that one is still present this month:
+    # same name already registered at another address, and that one is still present in this run:
     # could be a second address of the same person, or a different person -> listed for review
     for issuer, idx in inv.groupby("issuer").groups.items():
         R = reg[reg["issuer_name"] == issuer]
@@ -214,14 +271,13 @@ def assign_ids(investors, month, registry, overrides):
                         "postal_code": inv.at[i, "postal_code"], "total_shares": inv.at[i, "total_shares"],
                         "candidate_investor_id": r.investor_id, "candidate_street": r.street_address,
                         "candidate_city": r.city, "candidate_postal_code": r.postal_code,
-                        "candidate_last_shares": r.last_total_shares, "candidate_last_seen": r.last_seen_month,
+                        "candidate_last_shares": r.last_total_shares, "candidate_last_seen": r.last_seen_run,
                         "why_not_linked": "same name still present at the other address (second address or different person)",
                     })
 
     # 5) new IDs (and "manual" rows that asked for a new ID)
     for i in inv.index[inv["investor_id"].isna() & (inv["_name"] != "")]:
-        inv.at[i, "investor_id"] = str(next_no)
-        next_no += 1
+        inv.at[i, "investor_id"] = new_id(taken, f"{inv.at[i, 'issuer']}|{inv.at[i, '_name']}|{inv.at[i, '_street']}|{inv.at[i, '_loc']}")
         if inv.at[i, "id_match_method"] is None:
             inv.at[i, "id_match_method"] = "new"
     conf = {"manual": "confirmed", "exact": "high", "strong": "high", "probable_move": "medium", "new": "new"}
@@ -231,12 +287,12 @@ def assign_ids(investors, month, registry, overrides):
     reg = reg.set_index("investor_id", drop=False)
     for _, r in inv[inv["investor_id"].notna()].iterrows():
         rid = r["investor_id"]
-        addr = f"{month}:{r['_street']}|{r['_loc']}"
+        addr = f"{run}:{r['_street']}|{r['_loc']}"
         fields = {"issuer_name": r["issuer"], "holder_name": r["holder_name"], "name_key": r["_name"],
                   "street_key": r["_street"], "loc_key": r["_loc"], "street_address": r["street_address"] or "",
                   "city": r["city"] or "", "state_province": r["state_province"] or "",
                   "postal_code": r["postal_code"] or "", "country": r["country"] or "",
-                  "last_seen_month": month, "last_total_shares": str(r["total_shares"])}
+                  "last_seen_run": run, "last_total_shares": str(r["total_shares"])}
         if rid in reg.index:
             old = reg.loc[rid]
             hist = old["address_history"]
@@ -246,7 +302,7 @@ def assign_ids(investors, month, registry, overrides):
                 reg.at[rid, k] = v
             reg.at[rid, "address_history"] = hist
         else:
-            reg.loc[rid] = {**fields, "investor_id": rid, "first_seen_month": month, "address_history": addr}
+            reg.loc[rid] = {**fields, "investor_id": rid, "first_seen_run": run, "address_history": addr}
     reg = reg.reset_index(drop=True).reindex(columns=REGISTRY_COLUMNS)
 
     counts = inv["id_match_method"].value_counts().to_dict()

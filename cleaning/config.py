@@ -14,7 +14,7 @@ DEFAULTS = {
     "address_parsing": None,   # see config_nobo.yaml
     "reconciliation": None,    # check against the file's own control totals
     "collation": None,         # consolidate accounts into unique investors
-    "deliverable": {"issuer_overrides": {}},   # monthly client file (run_monthly.py)
+    "deliverable": {"issuer_overrides": {}},   # client file of each run (run_cleaning.py)
     "output": {"suffix": "_clean"},
 }
 

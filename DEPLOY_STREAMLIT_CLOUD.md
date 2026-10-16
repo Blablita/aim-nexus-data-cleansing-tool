@@ -2,12 +2,12 @@
 
 This turns the app from "only runs on Blablita's laptop" into a public URL the client,
 the professor and Kessia can open from their own computers. It is a **pilot/demo
-version**: `master/` (the investor registry that keeps IDs consistent month to month)
+version**: `master/` (the investor registry that keeps IDs consistent from one run to the next)
 is not wired to persistent cloud storage yet -- that piece is being worked on
 separately with Kessia (UC3, Azure backend). Each session on this cloud version
-starts from an empty registry, so duplicate/ID matching across months will not be
+starts from an empty registry, so duplicate/ID matching across runs will not be
 accurate here yet. Good for showing and testing the upload -> clean -> download flow;
-not for the real monthly production run until storage is resolved.
+not for the real production runs until storage is resolved.
 
 The repo has already been prepared locally: `git init`, a `.gitignore` that excludes
 every folder with client/investor data (`inbox/`, `deliverables/`, `qa/`, `master/`,
@@ -78,5 +78,5 @@ Streamlit Cloud redeploys automatically within a minute or two of the push.
 `master/investor_registry.csv` and the other files in `master/` do not persist
 between restarts of the cloud app (Streamlit Community Cloud's disk is temporary).
 Until the storage question is resolved with Kessia's Azure backend, treat this
-deployment as a flow demo, not the system of record -- the real monthly run stays
+deployment as a flow demo, not the system of record -- the real production run stays
 on Blablita's computer (`run_app.bat`) until that is wired in.
