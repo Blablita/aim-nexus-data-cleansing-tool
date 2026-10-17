@@ -32,8 +32,8 @@ RE_US_COUNTRY_ZIP = re.compile(r"^(?:US|USA)\s+(\d{5}(?:-\d{4})?)$")
 RE_TRAILING_US = re.compile(r"^(.*\S)\s+(?:US|USA|U\.S\.A\.?)$")
 RE_ISO_TAIL = re.compile(r"(?:^|\s)(?P<code>[A-Z]{2})(?P<pc>\s+[A-Z0-9-]{3,8})?$")
 RE_POSTAL_GENERIC = re.compile(r"\b(\d{4,6}(?:-\d{3,4})?|[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2})\b")
-RE_STREET_START = re.compile(
-    r"^(\d|#|P\.?\s?O\.?\s?BOX|POB\b|BOX\b|APT\b|APARTMENT|STE\b|SUITE|UNIT\b|FLAT\b|FL\b|FLOOR|"
+RE_STREET_START = re.compile(       # a line starting with a date ("04/11/1997 TRUST") is not a street
+    r"^(?!\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b)(\d|#|P\.?\s?O\.?\s?BOX|POB\b|BOX\b|APT\b|APARTMENT|STE\b|SUITE|UNIT\b|FLAT\b|FL\b|FLOOR|"
     r"RR\s?\d|HC\s?\d|PMB\b|ONE\b|TWO\b|THREE\b|FOUR\b|FIVE\b|TEN\b|BLDG|BUILDING)", re.I)
 
 # Words showing the holder is NOT an individual (checked on line 1 only)
@@ -55,7 +55,7 @@ ENTITY_RULES = [(label, re.compile(rx, re.I)) for label, rx in ENTITY_RULES]
 ACCOUNT_TYPES = [
     ("ROTH_IRA", r"\bROTH\b"),
     ("ROLLOVER_IRA", r"ROLLOVER|\bR/O\b|\bRRA\b"),
-    ("SEP_IRA", r"\bSEP\b"),
+    ("SEP_IRA", r"\bSEP\b(?![-/]\d)"),      # not "Sep-40" (a house number Excel turned into a date)
     ("SIMPLE_IRA", r"\bSIMPLE\b"),
     ("INHERITED_IRA", r"INHERIT|BENEF(ICIARY)?\s+IRA|\bBENE\s+IRA|\bDECD\b|DECEASED|\bBDA\b"),
     ("TRADITIONAL_IRA", r"\bIRA\b"),                       # generic IRA, dropped if a specific IRA type is found
@@ -68,14 +68,14 @@ ACCOUNT_TYPES = [
     ("TENANTS_IN_COMMON", r"TEN COM|TENANTS IN COMMON|\bTIC\b"),
     ("TENANTS_BY_ENTIRETY", r"TEN ENT|TENANTS BY|\bA?TBE\b"),
     ("COMMUNITY_PROPERTY", r"COMM(UNITY)?\s+PROP"),
-    ("CUSTODIAL_MINOR", r"UTMA|UGMA|UNTIL AGE"),
+    ("CUSTODIAL_MINOR", r"\bUTMA|\bUGMA|UNTIL AGE"),     # not "Trautmannsdorf"
     ("TRUST", r"\bTRUST\b|\bTTEES?\b|\bTRUSTEES?\b|\bU/A\b|\bUAD\b|\bU/A/D\b|\bDTD\b|\bREV\s+TR|\bIRR\s+TR|"
               r"\bTRS\b|\bTRU\b|\bTRST\b|\bU/?DEC\b|CREDIT SHELTER"),
     ("ESTATE", r"ESTATE OF|\bEST OF\b|\bEXECUTOR\b|\bEX(?=\s*\||\s*$)"),
     ("FOUNDATION", r"\bFDN\b|\bFDNTN\b|FOUNDATION"),
     ("CANADA_REGISTERED", r"\bRRSP\b|\bRRIF\b|\bTFSA\b|\bLIRA\b|\bRESP\b"),
     ("PLEDGED", r"PLEDGE"),
-    ("OMNIBUS", r"\bOMNI(BUS)?\b"),
+    ("OMNIBUS", r"\bOMNI(BUS)?\b(?!\s+(?:COURT|CT|DR|DRIVE|RD|ROAD|ST|STREET|AVE|AVENUE|BLVD|WAY|LANE|LN|PL|PLACE|CIR|CIRCLE|PKWY|PLAZA|HOTEL|CENTER|CENTRE|BLDG|BUILDING)\b)"),
     ("SECURITIES_LENDING", r"(?<!NON-)(?<!NON )\bFPSL\b|\bSLFP\b|SEC(URITIES)?\s+LEND|STOCK\s+BORROW|\bFPL\b|FULLY PAID LEND"),
     ("TAX_WITHHOLDING", r"\bW/H\b|\bUSWT\b|WITHHOLDING"),
     ("PROXY_AGENT", r"\bISS/|ISSGOVERNANCE|\bPEID\b|GLASS LEWIS|\bPVA\b|\bRMG/|PROXY\s?EDGE"),
@@ -156,9 +156,14 @@ def _looks_like_name(line):
     return letters >= 3 and not RE_STREET_START.match(line)
 
 
+RE_NOT_PERSON_LINE = re.compile(r"^\s*ATTN\b|@|^\s*(?:ISS|RMG)\s*/", re.I)   # "ATTN:EMAIL", "ISS/152/GSAM"
+
+
 def classify_entity(name, extra_lines):
     if not name:
         return "unknown"
+    if RE_NOT_PERSON_LINE.search(name):       # mailing instruction or proxy service code, not a person
+        return "company_institution"
     for label, rx in ENTITY_RULES:
         if rx.search(name):
             return label

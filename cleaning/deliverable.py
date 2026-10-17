@@ -73,7 +73,10 @@ DATA_DICTIONARY = [
     ("type", "Holder type: individual (a person, a joint account, a personal trust or a person's custodial/IRA "
              "account), corporate (a company investing its own money, including family holding companies), "
              "institutional (a professional investor or intermediary: fund, asset manager, bank, broker, pension, "
-             "insurance, foundation, endowment, omnibus/nominee account) or unknown. See the Account_Types sheet."),
+             "insurance, foundation, endowment, omnibus/nominee account) or unknown. Two steps: first the account "
+             "(account_category: an INSTITUTIONAL account such as a proxy service, omnibus or tax withholding "
+             "account is institutional; a personal account such as an IRA, TOD, joint or UTMA account held by a "
+             "person or for one person (FBO) is individual), then the holder name. See the Account_Types sheet."),
     ("primary_contact", "The person on the account, for individual holders only (empty for corporate, institutional "
                         "and unknown). The holder name without registration words: 'ANNA M SAMPLE TOD' -> KRISTINA "
                         "SEGURA, 'ROBERT T SAMPLE TTEE' -> ROBERT T SAMPLE. Empty when the registration names no person "
@@ -91,7 +94,8 @@ DATA_DICTIONARY = [
     ("id_match_confidence", "confirmed / high / medium / new, from id_match_method."),
     ("address_changed", "True if the address is different from the one in the registry (the investor moved or the "
                         "address was written differently)."),
-    ("total_shares", "Shares held by the investor in this issuer, summed over all of the investor's accounts. "
+    ("total_shares", "Shares held by the investor in this issuer, summed over all of the investor's accounts and "
+                     "rounded to a whole number (some brokers report fractional shares). "
                      "The file is sorted by this column, largest first."),
     ("n_accounts", "Number of accounts (rows of the NOBO list, one per account at one broker) grouped under this "
                    "investor. total_shares is the sum of those accounts. An account can hold 0 shares on the record date."),
@@ -184,9 +188,9 @@ ACCOUNT_TYPE_GUIDE = [
     ("entity_type", "joint_individual", "Two or more people on the same account.", "'&' in the holder name, JT, WROS"),
     ("entity_type", "individual", "A person: none of the words above and at least two words in the name.", "-"),
     ("entity_type", "unknown", "No holder name, or a name that cannot be classified.", "-"),
-    ("type", "individual", "A person: entity_type individual, joint_individual or trust, or a nominee_custodian name that is one person's custodial/IRA account.", "ATC AS CUST FOR IRA, FMTC CUSTODIAN - IRA, <name> CUST FOR"),
+    ("type", "individual", "Step 1 (account first): a personal account (account_category RETIREMENT, JOINT_OWNERSHIP, TRANSFER_ON_DEATH, CUSTODIAL_MINOR, HEALTH_EDUCATION) held by a person, by a custodian for one person, or by a company line with FBO <person>; not pooled accounts (DTC, CEDE, OMNIBUS, NOMINEES). Step 2 (holder name): entity_type individual, joint_individual or trust, or a nominee_custodian name that is one person's custodial/IRA account.", "ATC AS CUST FOR IRA, FMTC CUSTODIAN - IRA, <name> CUST FOR"),
     ("type", "corporate", "A company investing its own money (company_institution without investment words), including family holding companies.", "INC, LLC, LTD, CORP, LP... without the words below; FAMILY"),
-    ("type", "institutional", "A professional investor or intermediary: fund, asset manager, bank, broker, pension, insurance, foundation, endowment, omnibus/nominee.", "FUND, ETF, CAPITAL, PARTNERS, INVESTMENT(S), ADVISORS, MANAGEMENT, ASSET, SECURITIES, BANK, PENSION, INSURANCE, FOUNDATION, FINANCIAL, BROKERS, NOMINEES, OMNIBUS, CEDE, DTC..."),
+    ("type", "institutional", "A professional investor or intermediary: fund, asset manager, bank, broker, pension, insurance, foundation, endowment, omnibus/nominee. Step 1 (account first): any account whose account_category is INSTITUTIONAL (proxy service such as ISS, omnibus, tax withholding, proprietary trading, ETF/UIT) or account_type FOUNDATION, unless it is also a personal account (IRA, joint, TOD, UTMA). Step 2: the holder name keywords. A holder line that is a mailing instruction (ATTN:..., an email) is never a person: the organization on the next line decides institutional or corporate.", "FUND, ETF, CAPITAL, PARTNERS, INVESTMENT(S), ADVISORS, MANAGEMENT, ASSET, SECURITIES, BANK, PENSION, INSURANCE, FOUNDATION, FINANCIAL, BROKERS, NOMINEES, OMNIBUS, CEDE, DTC..."),
     ("type", "unknown", "entity_type unknown (no name or a name that cannot be classified).", "-"),
 ]
 
@@ -437,4 +441,19 @@ def build(run, results, prev_investors, collation_cfg, overrides=None, registry=
         for col in ID_COLUMNS:
             if col in sheets[name].columns:          # numbers only, so Excel shows them as numbers
                 sheets[name][col] = pd.to_numeric(sheets[name][col], errors="coerce").astype("Int64")
+    # share totals as whole numbers, no decimals (client 2026-10-17). Some brokers report fractional shares
+    # (144359.96491); the total is rounded to the nearest share (.5 up). The account-level `shares` column keeps
+    # the value exactly as reported, and the control totals are checked on the exact values.
+    for name, cols in (("Summary", ("total_shares", "shares_in_identical_rows", "source_total_shares")),
+                       ("Investors", ("total_shares", "previous_shares", "shares_change")),
+                       ("Exited_Investors", ("total_shares", "previous_shares", "shares_change"))):
+        for col in cols:
+            if col in sheets[name].columns:
+                sheets[name][col] = _whole_shares(sheets[name][col])
     return sheets, notes, registry_out, review, manual_sheet
+
+
+def _whole_shares(values):
+    """144359.96491 -> 144360, -2.5 -> -3 (nearest whole share, .5 away from zero); empty stays empty."""
+    v = pd.to_numeric(values, errors="coerce")
+    return ((v.abs() + 0.5) // 1 * v.apply(lambda x: -1 if x < 0 else 1)).astype("Int64")

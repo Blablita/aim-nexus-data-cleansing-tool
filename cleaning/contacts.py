@@ -18,7 +18,7 @@ import re
 # Words that mark a professional investor managing money (institutional). Checked on company names.
 RE_INSTITUTIONAL = re.compile(
     r"\b(FUNDS?|ETF|CAPITAL|PARTNERS|INVESTMENTS?|INVSTMNT|INVESTORS?|ADVISORS?|ADVISERS?|ADVISORY|MANAGEMENT|"
-    r"MNGMNT|MGMT|MGT|ASSET|ASSETS|SECURITIES|BANK|BANCO|BANQUE|BANCA|SPARKASSE|PENSION|RETIREMENT|INSURANCE|"
+    r"MNGMNT|MGMT|MGT|ASSET|ASSETS|SECURITIES|BANK|BANKING|BANCO|BANQUE|BANCA|SPARKASSE|PENSION|RETIREMENT|INSURANCE|"
     r"ASSURANCE|LIFE|FOUNDATION|FDNTN|FDN|ENDOWMENT|UNIVERSITY|COLLEGE|SCHOOL|CHURCH|SOCIETY|ASSOCIATION|"
     r"FINANCIAL|FINANCE|BROKERS?|BROKERAGE|NOMINEES?|CUSTODY|CLEARING|WEALTH|TRADING|MARKETS|VENTURES?|"
     r"EQUITY|EQUITIES|PORTFOLIO|HEDGE|ISS|GLASS LEWIS|PROXY|SOCIETE GENERALE|HSBC|CREDIT|EUROBANK|STATE STREET|"
@@ -28,11 +28,45 @@ RE_FAMILY = re.compile(r"\bFAMILY\b")
 # "JOHN PAUL SAMPLE CUST FOR", "FMTC CUSTODIAN - IRA BDA"
 RE_PERSONAL_CUSTODY = re.compile(r"\bCUST(ODIAN)?\b|\bC/F\b|\bFBO\b|\bIRA\b|\bROTH\b|\bUTMA\b|\bUGMA\b")
 RE_POOLED = re.compile(r"\bOMNI(BUS)?\b|\bNOMINEES?\b|\bCEDE\b|\bDTC\b|\bCLIENTS?\b")
+# holder line that is a mailing instruction or a proxy service code, not a person:
+# "ATTN:LOA@ISSGOVERNANCE.COM", "ATTN:EMAIL", "ISS/152/GSAM", "RMG/CLARIVEST/3692"
+RE_NOT_PERSON_HOLDER = re.compile(r"^\s*ATTN\b|@|^\s*(?:ISS|RMG)\s*/")
+# account categories that belong to a person; an institutional category next to them is not used for `type`
+# (for example ROTH_IRA + OMNIBUS read from an address)
+PERSONAL_CATEGORIES = {"RETIREMENT", "HEALTH_EDUCATION", "JOINT_OWNERSHIP", "TRANSFER_ON_DEATH", "CUSTODIAL_MINOR"}
 
 
-def holder_type(entity_type, holder_name):
-    """individual / corporate / institutional / unknown (draft rules, to confirm with the client)."""
+RE_FBO_PERSON = re.compile(r"\bFBO\s+(?P<name>[A-Z][A-Z .'-]{2,})")
+
+
+def holder_type(entity_type, holder_name, account_category=None, extra=None, original_lines=None):
+    """individual / corporate / institutional / unknown (draft rules, to confirm with the client).
+
+    Step 1, the account first (account_category = account_type mapped with the client's NOBO glossary):
+      a. INSTITUTIONAL account (proxy service, omnibus, tax withholding, proprietary trading, ETF/UIT, foundation)
+         -> institutional, unless the account is also a personal one (IRA, joint, TOD, UTMA, HSA)
+      b. personal account (RETIREMENT, JOINT_OWNERSHIP, TRANSFER_ON_DEATH, CUSTODIAL_MINOR, HEALTH_EDUCATION)
+         -> individual, when the holder is a person, a custodian holding for one person, or a company line
+         with "FBO <person>". Pooled accounts (DTC, CEDE, OMNIBUS, NOMINEES) and companies without FBO keep step 2.
+    Step 2, the holder name (entity_type + keywords), as before."""
     name = holder_name.upper() if isinstance(holder_name, str) else ""
+    cats = set(str(account_category or "").split(","))
+    blob = " | ".join(x.upper() for x in (original_lines, extra) if isinstance(x, str))
+    personal = bool(cats & PERSONAL_CATEGORIES)
+    # --- step 1: the account
+    if not personal and ("INSTITUTIONAL" in cats or "FOUNDATION" in str(account_category or "")):
+        return "institutional"
+    if personal and name and not RE_POOLED.search(name) and not RE_NOT_PERSON_HOLDER.search(name):
+        if entity_type in ("individual", "joint_individual", "trust", "unknown"):
+            return "individual"
+        if entity_type == "nominee_custodian":
+            return "individual"            # "FMTC CUSTODIAN - ROTH IRA | FBO <person>", "ATC AS CUST FOR IRA"
+        if entity_type == "company_institution" and RE_FBO_PERSON.search(blob):
+            return "individual"            # "TRUIST INVESTMENT SERVICES INC | TRADITIONAL IRA | FBO <person>"
+    # --- step 2: the holder name
+    if name and RE_NOT_PERSON_HOLDER.search(name):
+        # the organization is named on the next lines ("ATTN:EMAIL | SAXO BANK AS-HELLERUP HEAD OFFICE")
+        return "institutional" if RE_INSTITUTIONAL.search(name + " " + blob) else "corporate"
     if entity_type in ("individual", "joint_individual", "trust"):
         return "individual"
     if entity_type == "nominee_custodian":
@@ -46,12 +80,18 @@ def holder_type(entity_type, holder_name):
     return "unknown"
 
 
+def fbo_person(original_lines):
+    """'... | FBO LARRY TUCKER | ...' -> LARRY TUCKER (the person a company/custodian account is for)."""
+    m = RE_FBO_PERSON.search(original_lines.upper()) if isinstance(original_lines, str) else None
+    return clean_person(m.group("name").split("|")[0].strip()) if m else None
+
+
 # ------------------------------------------------------------------ person names
 # Everything from the first of these words to the end of the name is registration text, not the name.
 RE_CUT = re.compile(
     r"\s+(?:TOD|POD|JT|JTWROS|WROS|JT\s*TEN|TEN\s+COM|TEN\s+ENT|TENANTS|COMM\s+PROP|IRA|ROTH|SEP|401\s?K|403\s?B|"
     r"PSP|DMD|MD|DDS|PHD|CPA|ESQ|CUST(?:ODIAN)?|C/F|AS|FBO|TTEES?|TRUSTEES?|CO-TTEE|TR|TRS|TRUST|REV|REVOCABLE|"
-    r"IRREVOCABLE|IRREV|LIVING|FAMILY|U/A|UA|UAD|U/A/D|DTD|ESTATE|EST|EXEC|EXECUTOR|BENE|BENEF|DECD|DECEASED|"
+    r"IRREVOCABLE|IRREV|LIVING|FAMILY|U/A|UA|UAD|U/A/D|DTD|ESTATE|EST|EXEC|EXECUTOR|BENE|BENEF|DECD|DECEASED|INH|INHERITED|"
     r"UTMA|UGMA|UNTIL|ACCOUNT|ACCT|A/C|DESIGNATED|PLAN)\b.*$")
 RE_PREFIX = re.compile(r"^(?:MR|MRS|MS|DR|NSPS|SPS)\s+")      # NSPS/SPS = (non-)spouse beneficiary
 NOT_A_NAME = {
@@ -133,7 +173,20 @@ RE_JOINT_LINE = re.compile(r"^(?P<name>.*?)\s+(?P<reg>(?:JT\s*TEN|JTWROS|JT\s*WR
                            r"COMM(?:UNITY)?\s+PROP)\b.*)$")
 # lines left as they are (client example: "MSSB FBO CO-DIAGNOSTICS INC." stays in holder_extra_lines)
 RE_KEEP_ALWAYS = re.compile(r"\bATTN\b|\bC/O\b|\bAS BENE OF\b|\bMGR:")
-RE_KEEP = re.compile(r"\bFBO\b|\bU/A\b|\bUAD\b|\bU/A/D\b|\bDTD\b|\bTRUST\b|\bTTEE\b")
+RE_KEEP = re.compile(r"\bFBO\b|\bU/A\b|\bUAD\b|\bU/A/D\b|\bDTD\b|\bTRUST\b|\bTTEE\b|\bTRUS\b|\bTRST\b|\bTR\b|"
+                     r"\bLIVING\b|\bREVOCABLE\b|\bIRREVOCABLE\b|\bREV\b")      # trust names and dates stay in notes
+# "PAUL SMITH TTEE ET AL", "A DOE & B DOE CO-TTEES": the trustee is the person behind a trust account
+RE_TRUSTEE_LINE = re.compile(r"^(?P<name>.+?)\s+(?:CO-?)?(?:TTEES?|TRUSTEES?)\b")
+RE_FBO_LINE = re.compile(r"^FBO\s+(?P<name>.+)$")
+RE_COMPANY_WORD = re.compile(r"\b(INC|CORP|CO|COMPANY|LLC|LTD|LP|LLP|PLC|NA|N\.A\.|TRUST|FSB)\b")
+
+
+def same_person(a, b):
+    """'ELLEN JOAN RIEBACK' and 'ELLEN J RIEBACK' are the same person (same first and last word)."""
+    if not a or not b:
+        return False
+    x, y = a.split(), b.split()
+    return x[0] == y[0] and x[-1] == y[-1]
 
 
 def _split_custodian(line):
@@ -160,7 +213,7 @@ def _split_custodian(line):
 def split_extra_lines(extra, holder_type_value, holder_name=None):
     """Splits the extra registration lines (joined with ' | ').
     Returns dict: custodian, type_of_account, secondary_contact, leftover."""
-    out = {"custodian": None, "type_of_account": None, "secondary_contact": None, "leftover": None}
+    out = {"custodian": None, "type_of_account": None, "secondary_contact": None, "leftover": None, "people": []}
     lines = [x.strip() for x in extra.split("|")] if isinstance(extra, str) and extra.strip() else []
     lines = [x for x in lines if x]
     types, left, used = [], [], set()
@@ -173,6 +226,15 @@ def split_extra_lines(extra, holder_type_value, holder_name=None):
         if RE_KEEP_ALWAYS.search(up):
             left.append(line)
             continue
+        if person and not re.search(r"\bCUST(ODIAN)?\b|\bC/F\b", up):
+            mt, mf = RE_TRUSTEE_LINE.match(up), RE_FBO_LINE.match(up)
+            if mt and (RE_INSTITUTIONAL.search(mt.group("name")) or RE_COMPANY_WORD.search(mt.group("name"))):
+                mt = None                   # a bank or trust company as trustee is not a contact person
+            names = [x for x in split_holder_name(mt.group("name")) if x] if mt else \
+                ([clean_person(mf.group("name"))] if mf and clean_person(mf.group("name")) else [])
+            if names:                       # trustee or beneficial owner named on its own line
+                out["people"] += names
+                continue
         # a custodian line can mention FBO / TRUST CO ("PTC CUST IRA FBO", "EDWARD JONES TRUST CO AS CUST")
         c = _split_custodian(re.sub(r"\s+FBO\s*$", "", up)) if re.search(r"\bCUST(ODIAN)?\b|\bC/F\b", up) else None
         if not c and RE_KEEP.search(up):
@@ -224,12 +286,24 @@ def add_client_columns(accounts):
     """Adds type, primary_contact, secondary_contact, custodian, type_of_account to the account table and
     replaces holder_extra_lines with what is left after the split. Returns the same DataFrame."""
     a = accounts
-    a["type"] = [holder_type(e, n) for e, n in zip(a["entity_type"], a["holder_name"])]
+    none = [None] * len(a)
+    cats = a["account_category"] if "account_category" in a.columns else none
+    orig = a["original_lines"] if "original_lines" in a.columns else none
+    a["type"] = [holder_type(e, n, c, x, o) for e, n, c, x, o in zip(a["entity_type"], a["holder_name"], cats,
+                                                                      a["holder_extra_lines"], orig)]
+    # entity_type follows: a holder that is not a person is not "individual" ("ISS/152/GSAM", "ATTN:EMAIL"),
+    # and a named holder of a personal account (IRA, TOD...) is not "unknown" ("C SOLOTOFF")
+    not_person = (a["type"].isin(["institutional", "corporate"])) & \
+        a["entity_type"].isin(["individual", "joint_individual", "unknown"])
+    a.loc[not_person, "entity_type"] = "company_institution"
+    a.loc[(a["type"] == "individual") & (a["entity_type"] == "unknown"), "entity_type"] = "individual"
     prim, sec, cust, toa, left = [], [], [], [], []
-    for name, extra, t, ent in zip(a["holder_name"], a["holder_extra_lines"], a["type"], a["entity_type"]):
+    for name, extra, t, ent, o in zip(a["holder_name"], a["holder_extra_lines"], a["type"], a["entity_type"], orig):
         p1 = p2 = None
         if t == "individual":
-            if ent == "nominee_custodian":
+            if ent == "company_institution":    # company line holding for one person: "... | FBO LARRY TUCKER"
+                p1 = fbo_person(o)
+            elif ent == "nominee_custodian":
                 m = RE_CUST_LINE.match(name.upper()) if isinstance(name, str) else None
                 p1 = clean_person(m.group("cust")) if m else None
             else:
@@ -240,6 +314,13 @@ def add_client_columns(accounts):
             # the holder line names the custodian or the trust, the person is on the next line
             # ("ATC AS CUST FOR IRA | SUSAN K EXAMPLE") -> that person is the primary contact
             p1, p2 = p2, None
+        for person_name in s["people"]:     # trustee / FBO lines fill the contacts that are still empty
+            if not p1:
+                p1 = person_name
+            elif not p2 and not same_person(person_name, p1):
+                p2 = person_name
+        if same_person(p1, p2):             # the same person read twice (holder line and trust line)
+            p2 = None
         prim.append(p1)
         sec.append(p2)
         cust.append(s["custodian"])
