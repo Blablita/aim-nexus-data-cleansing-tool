@@ -155,6 +155,40 @@ def check_password():
     return False
 
 
+
+def enrichment_step():
+    """Step 4, after the manual review: broker file built from the REVIEWED clean file (not from the run)."""
+    from cleaning.enrichment import build_enrichment_request, read_reviewed, to_xlsx_bytes
+    st.divider()
+    st.subheader("4. Enrichment file (after the manual review)")
+    st.caption("Upload the clean database file after the manual review (Silver reviewed). The tool builds the file "
+               "to send to the data broker: one row per investor with a US address, type individual and a "
+               "primary contact (investor_id, holder name, primary contact split into first / middle / last name, "
+               "address). The broker must return investor_id unchanged: it is the key to join the enriched file back.")
+    up = st.file_uploader("Reviewed clean database (.xlsx) or investors file (.csv)", type=["xlsx", "csv"],
+                          key="reviewed_upload")
+    if not up:
+        return
+    try:
+        enrich, counts = build_enrichment_request(read_reviewed(up, up.name))
+    except Exception as exc:                    # wrong file, missing columns...
+        st.error(f"Could not read this file: {exc}")
+        return
+    m = re.search(r"\d{4}-\d{2}-\d{2}", up.name)
+    label = m.group(0) if m else date.today().isoformat()
+    st.success(f"{counts['sent']:,} US individuals ready for the broker. Not sent: "
+               f"{counts['international_not_sent']:,} international, {counts['us_not_a_person_or_no_contact']:,} "
+               f"US companies/institutions or without a primary contact.")
+    c1, c2 = st.columns(2)
+    c1.download_button(f"enrichment_request_{label}.xlsx", to_xlsx_bytes(enrich),
+                       file_name=f"enrichment_request_{label}.xlsx", key="dl_enrich_xlsx", width="stretch",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    c2.download_button(f"enrichment_request_{label}.csv", enrich.to_csv(index=False).encode("utf-8-sig"),
+                       file_name=f"enrichment_request_{label}.csv", key="dl_enrich_csv", width="stretch",
+                       mime="text/csv")
+    st.dataframe(enrich.head(20), width="stretch", hide_index=True)
+
+
 # ---------------------------------------------------------------- page
 
 st.set_page_config(page_title="AIM Nexus Data Cleansing Tool", page_icon="🧹", layout="wide")
@@ -271,6 +305,7 @@ if last and last["month"] == month and last["code"] != 0:
 
 if not os.path.isfile(xlsx):
     st.write(f"No results for {month} yet.")
+    enrichment_step()
     st.stop()
 
 summary = None
@@ -329,3 +364,5 @@ with st.expander("QA files (internal, do not send to the client)"):
         with open(log, encoding="utf-8", errors="replace") as f:
             st.code(f.read(), language=None)
     st.caption(f"Folder: {os.path.join(QA, month)}")
+
+enrichment_step()

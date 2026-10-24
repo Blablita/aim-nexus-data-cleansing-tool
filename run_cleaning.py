@@ -239,24 +239,6 @@ def main():
            lambda p: sheets["Investors"].to_csv(p, index=False, encoding="utf-8-sig"))
     _write(os.path.join(deliv_dir, f"original_database_{run_id}.csv"),
            lambda p: sheets["Original_Database"].to_csv(p, index=False, encoding="utf-8-sig"))
-    # file for the data broker (US individuals with a primary contact; investor_id is the join key)
-    from cleaning.enrichment import build_enrichment_request
-    enrich, ecounts = build_enrichment_request(sheets["Investors"])
-
-    def _write_enrich_xlsx(path):
-        with pd.ExcelWriter(path, engine="openpyxl") as w:
-            enrich.to_excel(w, sheet_name="Enrichment_Request", index=False)
-            ws = w.sheets["Enrichment_Request"]
-            for row in ws.iter_rows(min_row=2, max_col=3):      # investor_id and CUSIP stay text in Excel
-                for c in row:
-                    c.number_format = "@"
-            _style(ws)
-    _write(os.path.join(deliv_dir, f"enrichment_request_{run_id}.xlsx"), _write_enrich_xlsx)
-    _write(os.path.join(deliv_dir, f"enrichment_request_{run_id}.csv"),
-           lambda p: enrich.to_csv(p, index=False, encoding="utf-8-sig"))
-    notes.append(f"Enrichment request: {ecounts['sent']:,} US individuals sent to the broker; not sent: "
-                 f"{ecounts['international_not_sent']:,} international, {ecounts['us_not_a_person_or_no_contact']:,} "
-                 f"US companies/institutions or without a primary contact. The broker must return investor_id unchanged.")
 
     print("\n" + "=" * 70)
     print(f"DELIVERABLE {run_id}")

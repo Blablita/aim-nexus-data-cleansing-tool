@@ -30,6 +30,20 @@ Result:
 
 **Before selling or sharing the deliverable:** NOBO information has use restrictions (US: SEC Rule 14a-13(b)(4), "exclusively for purposes of corporate communications"; Canada: NI 54-101, s. 7.1). Confirm with the client who receives the file and for what purpose.
 
+## After the manual review: file for the data broker
+
+The cleaning run does not create the broker file. After the manual review of the clean file (Silver reviewed),
+build it from the REVIEWED file, so the reviewer's corrections are what is sent:
+
+- App: step 4 "Enrichment file (after the manual review)": upload the reviewed clean_database .xlsx and download
+  enrichment_request_<date>.xlsx / .csv.
+- Command line: `python make_enrichment.py "deliverables\<run date>\clean_database_<run date>_reviewed.xlsx"`
+  (the files are written next to the reviewed file).
+
+One row per investor with a US address, type individual and a primary_contact: investor_id, issuer_name, CUSIP,
+holder_name, primary_contact, first / middle / last name, suffix, address. Rows rejected in the manual verification
+are not sent. The broker must return investor_id unchanged: it is the key to join the enriched file back.
+
 ## One-off run on any files (NOBO)
 
 1. Put the client files (`.csv`, `.xls`, `.xlsx`) in the folder **above** this one (`Data cleaning`).
