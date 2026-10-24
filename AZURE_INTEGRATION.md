@@ -73,3 +73,15 @@ Because the script is currently CLI/folder-based rather than exposing a clean Py
 | Persistent state | <base>/master/ (investor_registry.csv, id_overrides.csv, id_migration.csv, manual_verification.csv, snapshots/) |
 | Dependencies | pandas, PyYAML, openpyxl, xlrd |
 | Not needed | app.py, run_app.bat, .streamlit/, streamlit package |
+
+## Column changes (October 24, 2026)
+
+If the database loads the clean file, update these column names:
+- `entity_type` is now `holder_type_detail`
+- `account_types` (Investors) and `account_type` (Original_Database) are now `account_type_code`
+
+The column order changed too (keys, then the main columns for the reviewer, then the internal columns).
+Load columns by name, not by position. New columns since October 24: `feedback_from_reviewer` (Investors,
+Original_Database, Identical_Rows, Exited_Investors) and `CUSIP_check` (Summary).
+The file for the data broker is a separate step after the manual review (app step 4 / make_enrichment.py).
+

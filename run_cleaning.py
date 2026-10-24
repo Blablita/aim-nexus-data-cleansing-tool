@@ -229,10 +229,19 @@ def main():
             return alt
 
     def _write_xlsx(path):
+        from openpyxl.styles import Font, PatternFill
+        from cleaning.deliverable import MAIN_COLUMNS
+        main_fill, other_fill = PatternFill("solid", fgColor="31869B"), PatternFill("solid", fgColor="BFBFBF")
         with pd.ExcelWriter(path, engine="openpyxl") as w:
             for name, df in sheets.items():
                 df.to_excel(w, sheet_name=name, index=False)
                 _style(w.sheets[name])
+                if name in ("Investors", "Original_Database", "Identical_Rows", "Exited_Investors"):
+                    # main columns for the reviewer in blue, internal columns (rules, QA, future use) in grey
+                    for cell in w.sheets[name][1]:
+                        main = cell.value in MAIN_COLUMNS
+                        cell.fill = main_fill if main else other_fill
+                        cell.font = Font(bold=True, color="FFFFFF" if main else "000000")
 
     xlsx = _write(os.path.join(deliv_dir, f"clean_database_{run_id}.xlsx"), _write_xlsx)
     _write(os.path.join(deliv_dir, f"investors_{run_id}.csv"),

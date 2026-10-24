@@ -28,7 +28,9 @@ from .verification import apply_decisions, build_sheet
 RENAME = {"issuer": "issuer_name", "cusip": "CUSIP", "job_number": "Job_number",
           "postal_code": "ZIP Code/Postal Code",
           "holder_extra_lines": "notes",
-          "custodian": "Custodian", "type_of_account": "Type of Account"}   # names as in the client's example (2026-10-15)   # extra registration lines are kept, not deleted (client 2026-10-02)  # buyers are US-based (client feedback 2026-09-29)
+          "custodian": "Custodian", "type_of_account": "Type of Account",
+          "entity_type": "holder_type_detail", "account_types": "account_type_code",
+          "account_type": "account_type_code"}   # names as in the client's example (2026-10-15)   # extra registration lines are kept, not deleted (client 2026-10-02)  # buyers are US-based (client feedback 2026-09-29)
 
 # Duplicates are KEPT (client decision 2026-10-02): the same holder can appear several times because
 # of different account types. duplicate_status explains each case.
@@ -44,21 +46,28 @@ IDENTICAL_NOTE = ("Exact copy of another row of the same file (every column is t
 
 # Column order of the client file (internal names; renamed with RENAME when written)
 INVESTOR_COLUMNS = [
-    "record_date", "job_number", "cusip", "issuer", "investor_id", "total_shares", "n_accounts",
-    "holder_name", "primary_contact", "secondary_contact", "street_address", "city", "state_province",
-    "postal_code", "country", "type_of_account", "custodian", "is_international",
-    "data_quality", "change_vs_previous_list", "previous_record_date", "previous_shares", "shares_change",
-    "type", "entity_type", "account_types", "account_categories", "notes", "feedback_from_reviewer", "identical_copies", "id_match_method",
-    "id_match_confidence", "address_changed",
+    # keys
+    "record_date", "job_number", "cusip", "issuer", "investor_id",
+    # main columns for the reviewer (AIM Nexus)
+    "type", "entity_type", "total_shares", "n_accounts", "holder_name", "primary_contact", "secondary_contact",
+    "street_address", "city", "state_province", "postal_code", "country", "is_international", "custodian",
+    "type_of_account", "notes", "feedback_from_reviewer", "data_quality",
+    # internal: rules, comparison, ID matching, future enhancements
+    "account_types", "change_vs_previous_list", "previous_record_date", "previous_shares", "shares_change",
+    "account_categories", "identical_copies", "id_match_method", "id_match_confidence", "address_changed",
 ]
 ACCOUNT_COLUMNS = [
-    "record_date", "job_number", "cusip", "issuer", "investor_id", "shares", "holder_name",
-    "primary_contact", "secondary_contact", "holder_extra_lines", "feedback_from_reviewer", "street_address", "city", "state_province",
-    "postal_code", "country", "type_of_account", "custodian",
-    "is_international", "data_quality", "type", "entity_type", "account_type", "account_category",
-    "account_number", "duplicate_status", "identical_group_id", "identical_copies", "parsing_notes",
-    "original_lines", "source_file", "source_row", "verification_id",
+    "record_date", "job_number", "cusip", "issuer", "investor_id",
+    "type", "entity_type", "shares", "holder_name", "primary_contact", "secondary_contact",
+    "street_address", "city", "state_province", "postal_code", "country", "is_international", "custodian",
+    "type_of_account", "holder_extra_lines", "feedback_from_reviewer", "data_quality",
+    "account_type", "account_category", "account_number", "duplicate_status", "identical_group_id", "identical_copies",
+    "parsing_notes", "original_lines", "source_file", "source_row", "verification_id",
 ]
+# Header colors in the client file (client 2026-10-24): main columns for the reviewer in blue, the rest in grey
+MAIN_COLUMNS = {"type", "holder_type_detail", "total_shares", "shares", "n_accounts", "holder_name", "primary_contact",
+                "secondary_contact", "street_address", "city", "state_province", "ZIP Code/Postal Code", "country",
+                "is_international", "Custodian", "Type of Account", "notes", "feedback_from_reviewer", "data_quality"}
 IDENTICAL_COLUMNS = [c for c in ACCOUNT_COLUMNS if c not in ("account_number", "duplicate_status", "identical_copies",
                                                              "verification_id")] + ["validation_status", "validation_note"]
 ID_COLUMNS = ["identical_group_id"]      # investor_id is a 9-digit code kept as text (client 2026-10-15)
@@ -76,7 +85,7 @@ DATA_DICTIONARY = [
     ("investor_id", "Permanent investor ID: 9 digits, numbers only, stored as text, assigned at random (not in sequence) "
                     "the first time the investor appears and kept in the investor registry. One ID per investor per "
                     "issuer. A new address is a new ID (an investor who moves is technically a new account)."),
-    ("type", "Holder type: individual (a person, a joint account, a personal trust or a person's custodial/IRA "
+    ("type", "Holder type (main classification): individual (a person, a joint account, a personal trust or a person's custodial/IRA "
              "account), corporate (a company investing its own money, including family holding companies), "
              "institutional (a professional investor or intermediary: fund, asset manager, bank, broker, pension, "
              "insurance, foundation, endowment, omnibus/nominee account) or unknown. Two steps: first the account "
@@ -94,7 +103,7 @@ DATA_DICTIONARY = [
                   "'CHARLES SCHWAB & CO INC CUST' -> CHARLES SCHWAB & CO INC. In Investors: all custodians of the "
                   "investor's accounts, separated by ' ; '."),
     ("Type of Account", "Account description exactly as written in the file ('ROTH CONTRIBUTORY IRA', 'IRA ROLLOVER', "
-                        "'DESIGNATED BENE PLAN/TOD', 'JT TEN'). The standard code is in account_type."),
+                        "'DESIGNATED BENE PLAN/TOD', 'JT TEN'). The standard code is in account_type_code."),
     ("id_match_method", "How this run's row was linked to the registry: manual (confirmed by a person), exact (same "
                         "name + street + postal code), strong (same name and the same address written differently: "
                         "same postal code or same street), new (first time seen, or a new address: a new address is a "
@@ -145,10 +154,10 @@ DATA_DICTIONARY = [
     ("previous_record_date", "Record date of the previous list of the same issuer used for the comparison."),
     ("previous_shares", "total_shares in the previous list of the same issuer (empty for NEW and FIRST LIST)."),
     ("shares_change", "total_shares minus previous_shares (positive = bought, negative = sold)."),
-    ("entity_type", "Type of holder, from keywords in the holder name: nominee_custodian, trust, company_institution, "
-                    "joint_individual, individual or unknown (see the Account_Types sheet for the rules)."),
-    ("account_types", "Registration types found in any line of the investor's accounts (see the Account_Types sheet)."),
-    ("account_type", "(Original_Database sheet) Registration type(s) of this one account, from keywords in all its "
+    ("holder_type_detail", "Detail of the holder type (used by the rules to set `type`), from keywords in the holder name: nominee_custodian, trust, company_institution, "
+                    "joint_individual, individual or unknown (see the Account_Types sheet for the rules). The 4-value classification is in `type`."),
+    ("account_type_code (Investors)", "Standard codes of the registration types found in any line of the investor's accounts, from the client's NOBO List Acronym Glossary (see the Account_Types sheet). The text as written in the file is in Type of Account."),
+    ("account_type_code (Original_Database)", "Standard code(s) of the registration type of this one account, from keywords in all its "
                      "registration lines, based on the client's NOBO List Acronym Glossary (see the Account_Types sheet)."),
     ("account_category, account_categories", "Broad group of the account type(s): RETIREMENT, HEALTH_EDUCATION, "
      "JOINT_OWNERSHIP, TRANSFER_ON_DEATH, CUSTODIAL_MINOR, TRUST_ESTATE, LENDING_COLLATERAL, INSTITUTIONAL or "
@@ -205,10 +214,10 @@ ACCOUNT_TYPE_GUIDE = [
     ("entity_type", "joint_individual", "Two or more people on the same account.", "'&' in the holder name, JT, WROS"),
     ("entity_type", "individual", "A person: none of the words above and at least two words in the name.", "-"),
     ("entity_type", "unknown", "No holder name, or a name that cannot be classified.", "-"),
-    ("type", "individual", "Step 1 (account first): a personal account (account_category RETIREMENT, JOINT_OWNERSHIP, TRANSFER_ON_DEATH, CUSTODIAL_MINOR, HEALTH_EDUCATION) held by a person, by a custodian for one person, or by a company line with FBO <person>; not pooled accounts (DTC, CEDE, OMNIBUS, NOMINEES). Step 2 (holder name): entity_type individual, joint_individual or trust, or a nominee_custodian name that is one person's custodial/IRA account.", "ATC AS CUST FOR IRA, FMTC CUSTODIAN - IRA, <name> CUST FOR"),
+    ("type", "individual", "Step 1 (account first): a personal account (account_category RETIREMENT, JOINT_OWNERSHIP, TRANSFER_ON_DEATH, CUSTODIAL_MINOR, HEALTH_EDUCATION) held by a person, by a custodian for one person, or by a company line with FBO <person>; not pooled accounts (DTC, CEDE, OMNIBUS, NOMINEES). Step 2 (holder name): holder_type_detail individual, joint_individual or trust, or a nominee_custodian name that is one person's custodial/IRA account.", "ATC AS CUST FOR IRA, FMTC CUSTODIAN - IRA, <name> CUST FOR"),
     ("type", "corporate", "A company investing its own money (company_institution without investment words), including family holding companies.", "INC, LLC, LTD, CORP, LP... without the words below; FAMILY"),
     ("type", "institutional", "A professional investor or intermediary: fund, asset manager, bank, broker, pension, insurance, foundation, endowment, omnibus/nominee. Step 1 (account first): any account whose account_category is INSTITUTIONAL (proxy service such as ISS, omnibus, tax withholding, proprietary trading, ETF/UIT) or account_type FOUNDATION, unless it is also a personal account (IRA, joint, TOD, UTMA). Step 2: the holder name keywords. A holder line that is a mailing instruction (ATTN:..., an email) is never a person: the organization on the next line decides institutional or corporate.", "FUND, ETF, CAPITAL, PARTNERS, INVESTMENT(S), ADVISORS, MANAGEMENT, ASSET, SECURITIES, BANK, PENSION, INSURANCE, FOUNDATION, FINANCIAL, BROKERS, NOMINEES, OMNIBUS, CEDE, DTC..."),
-    ("type", "unknown", "entity_type unknown (no name or a name that cannot be classified).", "-"),
+    ("type", "unknown", "holder_type_detail unknown (no name or a name that cannot be classified).", "-"),
 ]
 
 
@@ -217,6 +226,7 @@ def _account_types_sheet():
     g = pd.DataFrame(ACCOUNT_TYPE_GUIDE, columns=["column", "value", "meaning", "keywords searched"])
     g.insert(2, "account_category", [ACCOUNT_CATEGORY.get(v, "") if c == "account_type" else ""
                                      for c, v in zip(g["column"], g["value"])])
+    g["column"] = g["column"].replace({"account_type": "account_type_code", "entity_type": "holder_type_detail"})
     status = pd.DataFrame([("duplicate_status", k, "", v, "-") for k, v in DUPLICATE_STATUS.items()],
                           columns=g.columns)
     # keyword lists are internal method: they live in the Data Requirements & Rules document, not in the client file
@@ -417,7 +427,9 @@ def build(run, results, prev_investors, collation_cfg, overrides=None, registry=
         s.update(compared_with_run="-", previous_record_date="-", new_investors=None, continuing_investors=None,
                  exited_investors=None)
     if prev_investors is not None and len(prev_investors):
-        prev_investors = prev_investors.rename(columns={v: k for k, v in RENAME.items()})
+        back = {v: k for k, v in RENAME.items()}
+        back["account_type_code"] = "account_types"          # Investors level
+        prev_investors = prev_investors.rename(columns=back)
         prev_investors = prev_investors[prev_investors["issuer"].isin(set(investors["issuer"]))]
     if prev_investors is not None and len(prev_investors):
         prev = prev_investors.set_index(["issuer", "investor_id"])["total_shares"]
