@@ -45,7 +45,7 @@ ENTITY_RULES = [
      r"\bGMBH\b|\bS\.?A\b|\bAG\b|\bB\.?V\b|\bN\.?V\b|\bFUND\b|\bFUNDS\b|\bETF\b|\bCAPITAL\b|\bPARTNERS\b|"
      r"\bHOLDINGS?\b|\bINVESTMENTS?\b|\bADVISORS?\b|\bADVISERS?\b|\bMANAGEMENT\b|\bSECURITIES\b|\bBANK\b|"
      r"\bFOUNDATION\b|\bFDNTN\b|\bASSOCIATION\b|\bCOUNTY\b|\bUNIVERSITY\b|\bGROUP\b|\bPENSION\b|\bPLANS?\b|"
-     r"\bFINANCIAL\b|\bVENTURES?\b|\bBANKING\b|\bBROKERS?\b|\bBROKERAGE\b|\bPTE\b|\bWEALTH\b|\bSTRATEGIES\b|\bASSOCIATES\b|\bPORTFOLIO\b|\bINDEXING\b|\bENTERPRISES?\b|\bSOCIETY\b|\bCHURCH\b(?=\s+\S)|\bCOMPANY\b|\bAQR\b|\bLLC\b"),
+     r"\bFINANCIAL\b|\bVENTURES?\b|\bBANKING\b|\bBROKERS?\b|\bBROKERAGE\b|\bPTE\b|\bWEALTH\b|\bSTRATEGIES\b|\bASSOCIATES\b|\bPORTFOLIO\b|\bINDEXING\b|\bENTERPRISES?\b|\bSOCIETY\b|\bCHURCH\b(?=\s+\S)|\bCOMPANY\b|\bAQR\b|\bLLC\b|\bBANKA\b|\bASOCIADOS\b|\bFOUNDATIO\b"),
 ]
 ENTITY_RULES = [(label, re.compile(rx, re.I)) for label, rx in ENTITY_RULES]
 
@@ -168,7 +168,7 @@ def classify_entity(name, extra_lines):
         if rx.search(name):
             return label
     blob = " ".join([name] + extra_lines)
-    if re.search(r"&\s*$|\bJT\b|WROS", name) or " & " in name:
+    if re.search(r"&\s*$|\bJT\b|WROS|\sAND(?:/OR)?\s*$|\sAND\s", name) or " & " in name:   # "&" or the word AND
         return "joint_individual"
     if len(re.findall(r"[A-Za-z]{2,}", name)) >= 2:
         return "individual"

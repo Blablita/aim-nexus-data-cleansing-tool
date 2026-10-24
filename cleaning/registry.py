@@ -11,15 +11,13 @@ against the registry, from the surest rule to the least sure:
     1. manual         a decision saved in master/id_overrides.csv            (confirmed)
     2. exact          same name + same street + same ZIP5 / postal code      (high)
     3. strong         same name + same ZIP5, or same name + same street     (high)
-    4. probable_move  same name, not matched by the rules above, the old address
-                      is not in this run's file, and the shares are the same
-                      (within 1%). Only when there is exactly one candidate and
-                      the name is not common in the issuer's list.           (medium)
-    5. new            no match: a new ID is created                          (new)
+    4. new            no match: a new ID is created                          (new)
 
-Cases that look like a possible match but do not meet rule 4 (e.g. same name, different
-address, different shares) go to qa/<run>/id_review_<run>.csv. A person decides and,
-if they are the same investor, adds a line to master/id_overrides.csv; the next run
+New address = new ID (client rule 2026-10-24, meeting with AIM Nexus: an investor at a new
+address is technically a new account). The old "probable_move" rule (same name and same shares
+at a new address kept the same ID) is turned off: the investor gets a new ID. The same name at
+an old address is only listed in qa/<run>/id_review_<run>.csv for information. If AIM Nexus
+decides they are the same investor, a line in master/id_overrides.csv links them; the next run
 respects it. The scope is one issuer: the same person in two issuers gets two IDs.
 """
 
@@ -232,14 +230,8 @@ def assign_ids(investors, run, registry, overrides):
                      and (r.name_key, r.loc_key) not in current_locs]
             if not cands:
                 continue
-            close = [r for r in cands if _shares_close(r.last_total_shares, inv.at[i, "total_shares"])]
-            if len(close) == 1 and n not in common:
-                rid = close[0].investor_id
-                inv.at[i, "investor_id"], inv.at[i, "id_match_method"] = rid, "probable_move"
-                inv.at[i, "address_changed"] = True
-                used.add(rid)
-                todo.remove(i)
-            else:
+            # new address = new ID (client rule 2026-10-24): no probable_move link; listed for information only
+            if True:
                 for r in cands:
                     review.append({
                         "issuer_name": issuer, "holder_name": inv.at[i, "holder_name"],
@@ -248,8 +240,8 @@ def assign_ids(investors, run, registry, overrides):
                         "candidate_investor_id": r.investor_id, "candidate_street": r.street_address,
                         "candidate_city": r.city, "candidate_postal_code": r.postal_code,
                         "candidate_last_shares": r.last_total_shares, "candidate_last_seen": r.last_seen_run,
-                        "why_not_linked": ("common name" if n in common else
-                                           "shares differ" if not close else "more than one candidate"),
+                        "why_not_linked": "new address = new ID (client rule 2026-10-24); same name at an earlier "
+                                          "address. Link only if AIM Nexus confirms (master/id_overrides.csv)",
                     })
 
     # same name already registered at another address, and that one is still present in this run:

@@ -19,7 +19,8 @@ import pandas as pd
 
 from .address import account_category, classify_entity, holder_key as make_holder_key
 from .collate import collate
-from .contacts import add_client_columns
+from .cusip import normalize_cusip
+from .contacts import add_client_columns, add_clean_holder_name
 from .registry import assign_ids
 from .verification import apply_decisions, build_sheet
 
@@ -47,12 +48,12 @@ INVESTOR_COLUMNS = [
     "holder_name", "primary_contact", "secondary_contact", "street_address", "city", "state_province",
     "postal_code", "country", "type_of_account", "custodian", "is_international",
     "data_quality", "change_vs_previous_list", "previous_record_date", "previous_shares", "shares_change",
-    "type", "entity_type", "account_types", "account_categories", "notes", "identical_copies", "id_match_method",
+    "type", "entity_type", "account_types", "account_categories", "notes", "feedback_from_reviewer", "identical_copies", "id_match_method",
     "id_match_confidence", "address_changed",
 ]
 ACCOUNT_COLUMNS = [
     "record_date", "job_number", "cusip", "issuer", "investor_id", "shares", "holder_name",
-    "primary_contact", "secondary_contact", "holder_extra_lines", "street_address", "city", "state_province",
+    "primary_contact", "secondary_contact", "holder_extra_lines", "feedback_from_reviewer", "street_address", "city", "state_province",
     "postal_code", "country", "type_of_account", "custodian",
     "is_international", "data_quality", "type", "entity_type", "account_type", "account_category",
     "account_number", "duplicate_status", "identical_group_id", "identical_copies", "parsing_notes",
@@ -65,11 +66,16 @@ ID_COLUMNS = ["identical_group_id"]      # investor_id is a 9-digit code kept as
 DATA_DICTIONARY = [
     ("record_date", "Record date of the NOBO list (YYYY-MM-DD), from the file header."),
     ("Job_number", "Job number of the NOBO list request, from the file header."),
-    ("CUSIP", "9-character CUSIP of the security, from the file header."),
+    ("CUSIP", "CUSIP of the security (Committee on Uniform Securities Identification Procedures): 9 characters, letters "
+              "and digits, kept as text, never more than 9 characters. From the file header. The 9th character is a check "
+              "digit and is verified. Excel damage is repaired when the result passes the check digit: scientific "
+              "notation (6.5344E+210 -> 65344E206) and lost leading zeros (23135106 -> 023135106)."),
+    ("CUSIP_check (Summary sheet)", "OK = valid CUSIP as received; otherwise what was repaired, or CHECK CUSIP when the "
+                                    "code is not a valid 9-character CUSIP (the file should be checked before delivery)."),
     ("issuer_name", "Company whose shares are held, from the file header (or config issuer_overrides)."),
     ("investor_id", "Permanent investor ID: 9 digits, numbers only, stored as text, assigned at random (not in sequence) "
-                    "the first time the investor appears and kept in the investor registry. It does not change when "
-                    "the investor moves. One ID per investor per issuer."),
+                    "the first time the investor appears and kept in the investor registry. One ID per investor per "
+                    "issuer. A new address is a new ID (an investor who moves is technically a new account)."),
     ("type", "Holder type: individual (a person, a joint account, a personal trust or a person's custodial/IRA "
              "account), corporate (a company investing its own money, including family holding companies), "
              "institutional (a professional investor or intermediary: fund, asset manager, bank, broker, pension, "
@@ -78,33 +84,44 @@ DATA_DICTIONARY = [
              "account is institutional; a personal account such as an IRA, TOD, joint or UTMA account held by a "
              "person or for one person (FBO) is individual), then the holder name. See the Account_Types sheet."),
     ("primary_contact", "The person on the account, for individual holders only (empty for corporate, institutional "
-                        "and unknown). The holder name without registration words: 'ANNA M SAMPLE TOD' -> KRISTINA "
-                        "SEGURA, 'ROBERT T SAMPLE TTEE' -> ROBERT T SAMPLE. Empty when the registration names no person "
+                        "and unknown). The holder name without registration words and titles: 'ANNA M SAMPLE TOD' -> ANNA "
+                        "M SAMPLE, 'ROBERT T SAMPLE TTEE' -> ROBERT T SAMPLE, 'MR. JOHN SAMPLE AND' -> JOHN SAMPLE. Empty when the registration names no person "
                         "(for example 'ATC AS CUST FOR IRA' or 'SMITH FAMILY TRUST')."),
     ("secondary_contact", "Second person on the account (joint holder), from the holder name ('J DOE & L DOE "
-                          "TTEE') or from an extra registration line ('MARY Q EXAMPLE', 'JANE R SAMPLE JT TEN')."),
+                          "TTEE', 'DUANE AND ANNE BARKER' -> DUANE BARKER and ANNE BARKER; & , AND, AND/OR and OR all "
+                          "join two people) or from an extra registration line ('MARY Q EXAMPLE', 'JANE R SAMPLE JT TEN')."),
     ("Custodian", "Broker or bank holding the account as custodian, from the text before CUST / CUSTODIAN / C/F: "
                   "'CHARLES SCHWAB & CO INC CUST' -> CHARLES SCHWAB & CO INC. In Investors: all custodians of the "
                   "investor's accounts, separated by ' ; '."),
     ("Type of Account", "Account description exactly as written in the file ('ROTH CONTRIBUTORY IRA', 'IRA ROLLOVER', "
                         "'DESIGNATED BENE PLAN/TOD', 'JT TEN'). The standard code is in account_type."),
     ("id_match_method", "How this run's row was linked to the registry: manual (confirmed by a person), exact (same "
-                        "name + street + postal code), strong (same name + same postal code or same street), "
-                        "probable_move (same name and same shares, new address), new (first time seen)."),
+                        "name + street + postal code), strong (same name and the same address written differently: "
+                        "same postal code or same street), new (first time seen, or a new address: a new address is a "
+                        "new ID)."),
     ("id_match_confidence", "confirmed / high / medium / new, from id_match_method."),
-    ("address_changed", "True if the address is different from the one in the registry (the investor moved or the "
-                        "address was written differently)."),
+    ("address_changed", "True if the address is written differently from the one in the registry (strong match). "
+                        "An investor who moves gets a new ID, so this is not a move."),
     ("total_shares", "Shares held by the investor in this issuer, summed over all of the investor's accounts and "
                      "rounded to a whole number (some brokers report fractional shares). "
                      "The file is sorted by this column, largest first."),
     ("n_accounts", "Number of accounts (rows of the NOBO list, one per account at one broker) grouped under this "
                    "investor. total_shares is the sum of those accounts. An account can hold 0 shares on the record date."),
     ("shares", "(Original_Database sheet) Shares held in that one account, as reported in the NOBO list."),
-    ("holder_name", "Name of the account holder (first name line of the registration)."),
-    ("notes", "Registration lines that are not the name or the address and that were not moved to secondary_contact, "
+    ("holder_name", "Name of the account holder, without '&' / 'AND' and without account-type words (TRUST, TOD, "
+                    "CUST, TTEE, FAO, EXEC, JT TEN, IRA...). For a person it is the first person on the account (the "
+                    "same as primary_contact); the second person is in secondary_contact. Example: 'WILLIAM SAMPLE AND "
+                    "LISA C SAMPLE' -> WILLIAM SAMPLE; 'J DOE & L DOE TTEE' -> J DOE (TTEE goes to notes); 'SMITH FAMILY "
+                    "TRUST U/A DTD' -> SMITH FAMILY (TRUST U/A DTD goes to notes). Company names keep '&' when it is part "
+                    "of the legal name ('GLASS LEWIS & CO'). The holder line exactly as in the file is in original_lines."),
+    ("notes", "First, the words removed from holder_name (for example TTEE, TOD, 'ATC AS CUST FOR IRA'). Then the registration lines that are not the name or the address and that were not moved to secondary_contact, "
               "Custodian or Type of Account (for example 'MSSB FBO ...', ATTN, C/O, trust dates, fund sub-account "
               "labels). Kept as they are for a later validation step. In Investors: the notes of all the "
               "investor's accounts, separated by ' ; '."),
+    ("feedback_from_reviewer", "Quality control notes written by the reviewer during the manual review: what the "
+                               "script should do differently for this kind of row (for example 'FAO should not be in "
+                               "primary_contact', 'this line is a custodian'). These notes are used to improve the "
+                               "rules for future runs, not to fix this file. Empty when the script creates the file."),
     ("parsing_notes", "(Original_Database sheet) What the parser had to assume to read the address (for example 'city "
                       "taken from the previous line'). Empty when the address was read directly."),
     ("original_lines", "(Original_Database sheet) The 7 name and address lines exactly as in the source file, "
@@ -254,7 +271,13 @@ def build(run, results, prev_investors, collation_cfg, overrides=None, registry=
         d = r["data"].copy()
         fname = r["summary"]["file"]
         d["issuer"] = resolve_issuer(fname, r["metadata"], overrides)
-        d["cusip"] = r["metadata"].get("CUSIP") or (d["cusip"].dropna().iloc[0] if "cusip" in d and d["cusip"].notna().any() else None)
+        raw_cusip = r["metadata"].get("CUSIP") or (d["cusip"].dropna().iloc[0] if "cusip" in d and d["cusip"].notna().any() else None)
+        # CUSIP: always text, 9 characters, check digit verified; Excel damage repaired (client 2026-10-24)
+        cusip_value, cusip_note = normalize_cusip(raw_cusip)
+        d["cusip"] = cusip_value
+        d["cusip_check"] = cusip_note or ("OK" if cusip_value else "CHECK CUSIP: missing")
+        if cusip_note:
+            notes.append(f"{fname}: {cusip_note}")
         d["record_date"] = normalize_record_date(r["metadata"].get("RECORD DATE"))
         d["job_number"] = r["metadata"].get("JOB NUMBER")
         d["source_file"] = fname
@@ -327,6 +350,7 @@ def build(run, results, prev_investors, collation_cfg, overrides=None, registry=
                              "job_number": sub["job_number"].iloc[0],
                              "cusip": inv["cusip"].iloc[0] if len(inv) else None, "issuer": issuer,
                              "source_files": " | ".join(files),
+                             "CUSIP_check": " | ".join(dict.fromkeys(sub["cusip_check"].dropna())) or None,
                              "accounts": info["accounts"], "accounts_without_holder_name": info["accounts_without_name"],
                              "unique_investors": info["unique_investors"],
                              "total_shares": float(sub["shares"].sum()),
@@ -356,6 +380,14 @@ def build(run, results, prev_investors, collation_cfg, overrides=None, registry=
     status[(n_acc > 1) & (n_types > 1)] = "MULTIPLE_ACCOUNTS_DIFFERENT_TYPES"
     status[(n_acc > 1) & (n_types == 1)] = "MULTIPLE_ACCOUNTS_SAME_TYPE"
     accounts["duplicate_status"] = status
+    # --- holder_name without "&"/"AND" and account-type words; removed words go to notes (client 2026-10-24).
+    # Done after the investor IDs, which are still matched on the original holder line.
+    accounts["holder_name_raw"] = accounts["holder_name"]
+    accounts = add_clean_holder_name(accounts, "holder_extra_lines")
+    raw_to_clean = {(i, v, r): c for i, v, r, c in zip(accounts["issuer"], accounts["investor_id"],
+                                                       accounts["holder_name_raw"], accounts["holder_name"])}
+    investors["holder_name"] = [raw_to_clean.get((i, v, r), r) for i, v, r in
+                                zip(investors["issuer"], investors["investor_id"], investors["holder_name"])]
     per_inv = accounts.groupby(["issuer", "investor_id"]).agg(
         account_categories=("account_category", lambda x: ",".join(dict.fromkeys(",".join(x).split(",")))),
         identical_copies=("identical_copies", "sum"),
@@ -371,6 +403,7 @@ def build(run, results, prev_investors, collation_cfg, overrides=None, registry=
     for col in ("notes", "type", "primary_contact", "secondary_contact", "custodian", "type_of_account"):
         investors[col] = per_inv[col].reindex(idx).replace("", None).values
     identical["investor_id"] = [key_to_id.get((i, k)) for i, k in zip(identical["issuer"], identical["holder_key"])]
+    identical = add_clean_holder_name(identical, "holder_extra_lines")
     identical = identical.sort_values(["identical_group_id", "shares"], kind="stable")
 
     # --- comparison with the previous list of the SAME issuer (it can come from any earlier run: with one
@@ -423,7 +456,10 @@ def build(run, results, prev_investors, collation_cfg, overrides=None, registry=
     accounts = accounts.sort_values("shares", ascending=False, kind="stable")
     if len(exited):
         exited = exited.sort_values("previous_shares", ascending=False, kind="stable")
-    manual_sheet = build_sheet(accounts, manual_decisions)
+    if len(exited):
+        exited = add_clean_holder_name(exited, "notes")
+    # the reviewer sees the holder line as it is in the file
+    manual_sheet = build_sheet(accounts.assign(holder_name=accounts["holder_name_raw"]), manual_decisions)
     sheets = {
         "Summary": pd.DataFrame(summary_rows).rename(columns=RENAME),
         "Investors": investors.reindex(columns=INVESTOR_COLUMNS).rename(columns=RENAME),

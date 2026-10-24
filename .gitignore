@@ -25,3 +25,6 @@ Thumbs.db
 
 # Working notes with real holder names (repo is public)
 RULES/
+
+# local backups of master/ (investor data, never commit)
+master_backup_*/

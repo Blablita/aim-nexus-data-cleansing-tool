@@ -13,6 +13,7 @@ original lines are kept in `original_lines`.
 """
 
 import re
+from collections import Counter
 
 # ------------------------------------------------------------------ type
 # Words that mark a professional investor managing money (institutional). Checked on company names.
@@ -89,11 +90,11 @@ def fbo_person(original_lines):
 # ------------------------------------------------------------------ person names
 # Everything from the first of these words to the end of the name is registration text, not the name.
 RE_CUT = re.compile(
-    r"\s+(?:TOD|POD|JT|JTWROS|WROS|JT\s*TEN|TEN\s+COM|TEN\s+ENT|TENANTS|COMM\s+PROP|IRA|ROTH|SEP|401\s?K|403\s?B|"
+    r"\s+(?:TOD|POD|TIC|A?TBE|JT|JTWROS|WROS|JT\s*TEN|TEN\s+COM|TEN\s+ENT|TENANTS|COMM\s+PROP|IRA|ROTH|SEP|401\s?K|403\s?B|"
     r"PSP|DMD|MD|DDS|PHD|CPA|ESQ|CUST(?:ODIAN)?|C/F|AS|FBO|TTEES?|TRUSTEES?|CO-TTEE|TR|TRS|TRUST|REV|REVOCABLE|"
     r"IRREVOCABLE|IRREV|LIVING|FAMILY|U/A|UA|UAD|U/A/D|DTD|ESTATE|EST|EXEC|EXECUTOR|BENE|BENEF|DECD|DECEASED|INH|INHERITED|"
     r"UTMA|UGMA|UNTIL|ACCOUNT|ACCT|A/C|DESIGNATED|PLAN)\b.*$")
-RE_PREFIX = re.compile(r"^(?:MR|MRS|MS|DR|NSPS|SPS)\s+")      # NSPS/SPS = (non-)spouse beneficiary
+RE_PREFIX = re.compile(r"^(?:MR|MRS|MS|MISS|DR|NSPS|SPS|FAO|FBO)\.?\s+")      # NSPS/SPS = (non-)spouse beneficiary
 NOT_A_NAME = {
     "ACCOUNT", "ACCT", "MANAGED", "RULES", "SUBJECT", "INDEX", "INDEXING", "CUSTOM", "BLEND", "PORTFOLIO",
     "CLIENT", "CLIENTS", "DOMESTIC", "TAX", "TAXABLE", "STRATEGY", "GROWTH", "VALUE", "INCOME", "EQUITY",
@@ -137,11 +138,17 @@ def clean_person(text):
     'ROBERT T SAMPLE TTEE' -> 'ROBERT T SAMPLE'. Returns None when what is left is not a person's name."""
     if not isinstance(text, str):
         return None
-    t = " ".join(text.upper().replace(",", " ").split())
+    t = " ".join(re.sub(r"[,()]", " ", text.upper()).split())      # "ANTHONY SAMPLE (BENE)" -> ANTHONY SAMPLE
     t = RE_PREFIX.sub("", t)
     t = RE_CUT.sub("", " " + t).strip()
     t = t.strip(" &-/")
+    t = RE_TRAILING_AND.sub("", t).strip(" &-/")     # "JOHN SCOTT BRADLEY AND" -> JOHN SCOTT BRADLEY
     return t if looks_like_person(t) else None
+
+
+RE_TRAILING_AND = re.compile(r"(?:^|\s+)(?:AND/OR|AND|OR)$")
+# two people joined by "&", "AND" or "AND/OR": "J DOE & L DOE", "JOHN SCOTT BRADLEY AND" (2nd person on the next line)
+RE_JOIN = re.compile(r"\s*&\s*|\s+AND/OR(?:\s+|$)|\s+AND(?:\s+|$)|\s+OR(?:\s+|$)")
 
 
 def split_holder_name(holder_name):
@@ -149,13 +156,116 @@ def split_holder_name(holder_name):
     'MARK A SAMPLE &' -> ('MARK A SAMPLE', None) (the 2nd person is on the next line)."""
     if not isinstance(holder_name, str):
         return None, None
-    parts = [p for p in re.split(r"\s*&\s*|\s+AND\s+", holder_name.upper()) if p.strip()]
+    parts = [p for p in RE_JOIN.split(holder_name.upper()) if p.strip()]
     if not parts:
         return None, None
+    if len(parts) > 1 and len(parts[0].split()) == 1 and len(parts[1].split()) >= 2:
+        # shared last name: "DUANE AND ANNE BARKER" -> DUANE BARKER and ANNE BARKER
+        last = RE_CUT.sub("", " " + parts[1]).split()
+        if len(last) >= 2:
+            parts[0] = f"{parts[0]} {last[-1]}"
     first = clean_person(parts[0])
     second = clean_person(parts[1]) if len(parts) > 1 else None
     return first, second
 
+
+
+# ------------------------------------------------------------------ holder_name shown in the client file
+# Client feedback 2026-10-24: holder_name without "&" / "AND" and without account-type words (TRUST, TOD, CUST,
+# TTEE, FAO, EXEC...). The removed text goes to notes. The original holder line is kept in original_lines, and
+# the investor ID is still matched on the original holder line (nothing changes in the registry).
+_END = r"(?=[\s,)]|$)"
+# account-type words, all holders. AS before CUST is removed with it ("ATC AS CUST FOR IRA" -> ATC)
+_REG_STRONG = (r"\(?(?:TOD|POD|BENE|BENEF)\)?|(?:CO-?)?TTEES?|(?:CO-?)?TRUSTEES?|CUST(?:ODIAN)?|C/F|FAO|FBO|"
+               r"EXEC|EXECUTOR|EXECUTRIX|U/A|UAD|U/A/D|DTD")
+# more account-type words, only for individual holders (in a company name TRUST, ESTATE, IRA... can be part of the name)
+_REG_PERSON = (r"JTWROS|JT\s*TEN|JT|WROS|TEN\s+COM|TEN\s+ENT|TIC|A?TBE|IRA|ROTH|SEP|401\s?K|403\s?B|UTMA|UGMA|"
+               r"TRUST(?!\s+(?:CO|COMPANY|N\.?A\.?|BANK|FSB|LTD|CORP)\b)|TR|TRS|TRST|REV|REVOCABLE|IRREVOCABLE|IRREV|"
+               r"DECD|DECEASED|INH|INHERITED|ESTATE|EST")
+RE_REG_ANY = re.compile(r"(?:^|\s+)(?:AS\s+)?(?:" + _REG_STRONG + ")" + _END + r".*$")
+RE_REG_PERSON = re.compile(r"(?:^|\s+)(?:AS\s+)?(?:" + _REG_STRONG + "|" + _REG_PERSON + ")" + _END + r".*$")
+RE_ESTATE_OF = re.compile(r"^(?:(?:THE\s+)?(?:ESTATE|EST)\s+OF|FAO|FBO)\s+")      # "ESTATE OF ...", "FAO TERRELL SAMPLE"
+CONNECTORS = {"&", "AND", "AND/OR", "OR"}
+TITLES = {"MR", "MRS", "MS", "MISS", "DR", "MR.", "MRS.", "MS.", "DR."}
+
+
+def _tokens(text):
+    return " ".join(re.sub(r"[,()]", " ", text.upper()).replace("&", " & ").split()).split()
+
+
+def _trim_connectors(text):
+    words = (text or "").split()
+    while words and words[0] in CONNECTORS:
+        words.pop(0)
+    while words and words[-1] in CONNECTORS:
+        words.pop()
+    return " ".join(words)
+
+
+def clean_holder_name(holder_name, type_value=None, primary=None, secondary=None):
+    """holder_name for the client file -> (clean name, removed text for notes).
+
+    individual with a primary contact: the holder name is the primary contact (first person), the second
+      person stays in secondary_contact, and the rest of the line (TTEE, TOD, a third name...) goes to notes:
+        'WILLIAM SAMPLE AND LISA C SAMPLE'  -> ('WILLIAM SAMPLE', None)
+        'J DOE & L DOE TTEE'                -> ('J DOE', 'TTEE')
+        'ANNA M SAMPLE TOD'                 -> ('ANNA M SAMPLE', 'TOD')
+        'ATC AS CUST FOR IRA' (person on the next line) -> ('MARY J SAMPLE', 'ATC AS CUST FOR IRA')
+    any other holder: the text from the first account-type word to the end goes to notes:
+        'SMITH FAMILY TRUST U/A DTD'        -> ('SMITH FAMILY', 'TRUST U/A DTD')
+        'TIAA TRUST N.A. CUST'              -> ('TIAA TRUST N.A.', 'CUST')
+      company names keep '&' / 'AND' (part of the legal name: 'GLASS LEWIS & CO')."""
+    if not isinstance(holder_name, str) or not holder_name.strip():
+        return holder_name, None
+    name = " ".join(holder_name.split())
+    person = type_value == "individual"
+    if person and isinstance(primary, str) and primary.strip():
+        left = Counter(_tokens(primary) + (_tokens(secondary) if isinstance(secondary, str) else []))
+        rest = []
+        for t in _tokens(name):
+            if left[t] > 0:
+                left[t] -= 1
+            elif t not in CONNECTORS and t not in TITLES:
+                rest.append(t)
+        return primary.strip(), _trim_connectors(" ".join(rest)) or None
+    up = " ".join(re.sub(r"[()]", " ", name.upper()).split()) if person else name.upper()
+    removed = []
+    m = RE_ESTATE_OF.match(up) if person else None
+    if m:
+        removed.append(m.group(0).strip())
+        up = up[m.end():]
+    rx = RE_REG_PERSON if person else RE_REG_ANY
+    m = rx.search(up)
+    if m and up[:m.start()].strip(" -,&"):
+        removed.append(m.group(0).strip())
+        up = up[:m.start()]
+    up = _trim_connectors(up.strip(" -,"))
+    if person:                          # two people and no primary contact: first one is the holder
+        parts = [p.strip() for p in RE_JOIN.split(up) if p.strip()]
+        if len(parts) > 1:
+            up = parts[0]
+            removed.insert(0, " ".join(parts[1:]))
+    if not up:
+        return name, None
+    if up == name.upper():
+        return name, None
+    return up, " ".join(removed) or None
+
+
+def add_clean_holder_name(df, extra_col):
+    """Replaces holder_name with the clean name and puts the removed text first in the notes column."""
+    if not len(df) or "holder_name" not in df.columns:
+        return df
+    get = lambda c: df[c] if c in df.columns else [None] * len(df)
+    names, extras = [], []
+    for n, t, p, s, x in zip(df["holder_name"], get("type"), get("primary_contact"), get("secondary_contact"),
+                             get(extra_col)):
+        clean, removed = clean_holder_name(n, t, p, s)
+        names.append(clean)
+        x = x if isinstance(x, str) and x.strip() else None
+        extras.append(" | ".join(v for v in (removed, x) if v) or None)
+    df["holder_name"], df[extra_col] = names, extras
+    return df
 
 # ------------------------------------------------------------------ extra lines
 # "<custodian> [AS] CUST|CUSTODIAN|C/F [FOR|OF] [-:] <account description>"
@@ -169,7 +279,7 @@ RE_ACCOUNT_TEXT = re.compile(
     r"TFSA|ESA|529|UTMA|UGMA|UNTIL AGE|DESIGNATED|STA RULES|KEOGH|PROFIT SHARING|PENSION PLAN|PSP|SAVINGS PLAN|"
     r"DEFERRAL|RETIREMENT ACCOUNT|ROTH ACCOUNT|ROLLOVER ACCOUNT|SEP ACCOUNT|TOD ACCOUNT|PLEDGE|JT|JTWROS|WROS|"
     r"JT TEN|TEN COM|TEN ENT|COMM/?\s?PROP|COMMUNITY PROPERTY|TBE|TIC)\b")
-RE_JOINT_LINE = re.compile(r"^(?P<name>.*?)\s+(?P<reg>(?:JT\s*TEN|JTWROS|JT\s*WROS|WROS|TEN\s*COM|TEN\s*ENT|"
+RE_JOINT_LINE = re.compile(r"^(?P<name>.*?)\s+(?P<reg>(?:JT\s*TEN|JTWROS|JT\s*WROS|WROS|TEN\s*COM|TEN\s*ENT|JT\b|TE\s+TOD|TIC\b|A?TBE\b|"
                            r"COMM(?:UNITY)?\s+PROP)\b.*)$")
 # lines left as they are (client example: "MSSB FBO CO-DIAGNOSTICS INC." stays in holder_extra_lines)
 RE_KEEP_ALWAYS = re.compile(r"\bATTN\b|\bC/O\b|\bAS BENE OF\b|\bMGR:")
