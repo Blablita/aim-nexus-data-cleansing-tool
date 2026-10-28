@@ -90,7 +90,7 @@ def fbo_person(original_lines):
 # ------------------------------------------------------------------ person names
 # Everything from the first of these words to the end of the name is registration text, not the name.
 RE_CUT = re.compile(
-    r"\s+(?:TOD|POD|TIC|A?TBE|JT|JTWROS|WROS|JT\s*TEN|TEN\s+COM|TEN\s+ENT|TENANTS|COMM\s+PROP|IRA|ROTH|SEP|401\s?K|403\s?B|"
+    r"\s+(?:TOD|POD|TIC|A?TBE|JT|JTWROS|WROS|JT\s*/?\s*TEN|TEN\s*/?\s*COM|TEN\s*/?\s*ENT|TENANTS|COMM\s+PROP|IRA|ROTH|SEP|401\s?K|403\s?B|"
     r"PSP|DMD|MD|DDS|PHD|CPA|ESQ|CUST(?:ODIAN)?|C/F|AS|FBO|TTEES?|TRUSTEES?|CO-TTEE|TR|TRS|TRUST|REV|REVOCABLE|"
     r"IRREVOCABLE|IRREV|LIVING|FAMILY|U/A|UA|UAD|U/A/D|DTD|ESTATE|EST|EXEC|EXECUTOR|BENE|BENEF|DECD|DECEASED|INH|INHERITED|"
     r"UTMA|UGMA|UNTIL|ACCOUNT|ACCT|A/C|DESIGNATED|PLAN)\b.*$")
@@ -179,7 +179,7 @@ _END = r"(?=[\s,)]|$)"
 _REG_STRONG = (r"\(?(?:TOD|POD|BENE|BENEF)\)?|(?:CO-?)?TTEES?|(?:CO-?)?TRUSTEES?|CUST(?:ODIAN)?|C/F|FAO|FBO|"
                r"EXEC|EXECUTOR|EXECUTRIX|U/A|UAD|U/A/D|DTD")
 # more account-type words, only for individual holders (in a company name TRUST, ESTATE, IRA... can be part of the name)
-_REG_PERSON = (r"JTWROS|JT\s*TEN|JT|WROS|TEN\s+COM|TEN\s+ENT|TIC|A?TBE|IRA|ROTH|SEP|401\s?K|403\s?B|UTMA|UGMA|"
+_REG_PERSON = (r"JTWROS|JT\s*/?\s*TEN|JT|WROS|TEN\s*/?\s*COM|TEN\s*/?\s*ENT|TIC|A?TBE|IRA|ROTH|SEP|401\s?K|403\s?B|UTMA|UGMA|"
                r"TRUST(?!\s+(?:CO|COMPANY|N\.?A\.?|BANK|FSB|LTD|CORP)\b)|TR|TRS|TRST|REV|REVOCABLE|IRREVOCABLE|IRREV|"
                r"DECD|DECEASED|INH|INHERITED|ESTATE|EST")
 RE_REG_ANY = re.compile(r"(?:^|\s+)(?:AS\s+)?(?:" + _REG_STRONG + ")" + _END + r".*$")
@@ -202,7 +202,8 @@ def _trim_connectors(text):
     return " ".join(words)
 
 
-def clean_holder_name(holder_name, type_value=None, primary=None, secondary=None):
+def clean_holder_name(holder_name, type_value=None, primary=None, secondary=None, trust_name=None,
+                      primary_from_contact=False):
     """holder_name for the client file -> (clean name, removed text for notes).
 
     individual with a primary contact: the holder name is the primary contact (first person), the second
@@ -219,7 +220,9 @@ def clean_holder_name(holder_name, type_value=None, primary=None, secondary=None
         return holder_name, None
     name = " ".join(holder_name.split())
     person = type_value == "individual"
-    if person and isinstance(primary, str) and primary.strip():
+    if person and isinstance(trust_name, str) and trust_name.strip():
+        return trust_name.strip(), None         # personal trust: the trust is the legal holder (2026-10-28)
+    if person and isinstance(primary, str) and primary.strip() and primary_from_contact is not True:
         left = Counter(_tokens(primary) + (_tokens(secondary) if isinstance(secondary, str) else []))
         rest = []
         for t in _tokens(name):
@@ -258,9 +261,9 @@ def add_clean_holder_name(df, extra_col):
         return df
     get = lambda c: df[c] if c in df.columns else [None] * len(df)
     names, extras = [], []
-    for n, t, p, s, x in zip(df["holder_name"], get("type"), get("primary_contact"), get("secondary_contact"),
-                             get(extra_col)):
-        clean, removed = clean_holder_name(n, t, p, s)
+    for n, t, p, s, x, tr, fc in zip(df["holder_name"], get("type"), get("primary_contact"), get("secondary_contact"),
+                                     get(extra_col), get("trust_name"), get("primary_from_contact")):
+        clean, removed = clean_holder_name(n, t, p, s, tr, fc)
         names.append(clean)
         x = x if isinstance(x, str) and x.strip() else None
         extras.append(" | ".join(v for v in (removed, x) if v) or None)
@@ -278,8 +281,8 @@ RE_ACCOUNT_TEXT = re.compile(
     r"\b(IRA|ROTH|SEP|SEP-IRA|SIMPLE|401\s?\(?K\)?|403\s?\(?B\)?|HSA|TOD|POD|BENE|BENEF|ROLLOVER|R/O|RRSP|RRIF|"
     r"TFSA|ESA|529|UTMA|UGMA|UNTIL AGE|DESIGNATED|STA RULES|KEOGH|PROFIT SHARING|PENSION PLAN|PSP|SAVINGS PLAN|"
     r"DEFERRAL|RETIREMENT ACCOUNT|ROTH ACCOUNT|ROLLOVER ACCOUNT|SEP ACCOUNT|TOD ACCOUNT|PLEDGE|JT|JTWROS|WROS|"
-    r"JT TEN|TEN COM|TEN ENT|COMM/?\s?PROP|COMMUNITY PROPERTY|TBE|TIC)\b")
-RE_JOINT_LINE = re.compile(r"^(?P<name>.*?)\s+(?P<reg>(?:JT\s*TEN|JTWROS|JT\s*WROS|WROS|TEN\s*COM|TEN\s*ENT|JT\b|TE\s+TOD|TIC\b|A?TBE\b|"
+    r"JT\s*/?\s*TEN|TEN\s*/?\s*COM|TEN\s*/?\s*ENT|COMM/?\s?PROP|COMMUNITY PROPERTY|TBE|TIC)\b")
+RE_JOINT_LINE = re.compile(r"^(?P<name>.*?)\s+(?P<reg>(?:JT\s*/?\s*TEN|JTWROS|JT\s*WROS|WROS|TEN\s*/?\s*COM|TEN\s*/?\s*ENT|JT\b|TE\s+TOD|TIC\b|A?TBE\b|"
                            r"COMM(?:UNITY)?\s+PROP)\b.*)$")
 # lines left as they are (client example: "MSSB FBO CO-DIAGNOSTICS INC." stays in holder_extra_lines)
 RE_KEEP_ALWAYS = re.compile(r"\bATTN\b|\bC/O\b|\bAS BENE OF\b|\bMGR:")
@@ -289,6 +292,116 @@ RE_KEEP = re.compile(r"\bFBO\b|\bU/A\b|\bUAD\b|\bU/A/D\b|\bDTD\b|\bTRUST\b|\bTTE
 RE_TRUSTEE_LINE = re.compile(r"^(?P<name>.+?)\s+(?:CO-?)?(?:TTEES?|TRUSTEES?)\b")
 RE_FBO_LINE = re.compile(r"^FBO\s+(?P<name>.+)$")
 RE_COMPANY_WORD = re.compile(r"\b(INC|CORP|CO|COMPANY|LLC|LTD|LP|LLP|PLC|NA|N\.A\.|TRUST|FSB)\b")
+
+
+# ------------------------------------------------------------------ contact lines (client 2026-10-28)
+# "ATTN: WILLIAM J. DEZELLEM", "KA: KRISTEN DRAKE", "C/O GEOFFREY B DURRELL | & ANDREA DURRELL":
+# the person named after ATTN / KA: / C/O is the contact of the account (primary, then secondary).
+RE_CONTACT_LINE = re.compile(r"^(?P<before>.*?)\s*(?:\b(?:ATTN|C/O)\b\s*[:.]?|\bKA\s*:)\s*(?P<name>.*)$")
+RE_AND_LINE = re.compile(r"^\s*(?:&|AND)\s+(?P<name>.+)$")
+JOB_TITLES = {"CEO", "CFO", "COO", "CTO", "CIO", "PRESIDENT", "VP", "CHAIRMAN", "DIRECTOR", "MANAGER", "TREASURER",
+              "SECRETARY", "PARTNER", "OWNER", "PRINCIPAL", "ADMIN", "ESQ", "ESQ.", "CPA", "MD"}
+CONTACT_STOP = (NOT_A_NAME - {"ROTH", "LONG", "SHORT", "SALES", "GENERAL", "UNITED", "CHURCH"}) | {
+    "STOCK", "LOAN", "LOANS", "BORROWED", "DEPT", "DEPT.", "DEPARTMENT", "OFFICE", "DESK", "TEAM", "REORG",
+    "PROXY", "ACCOUNTING", "LEGAL", "TAX", "EXTENSION", "AMERICA", "NORTH", "SOUTH", "EAST", "WEST", "REF", "PEID"}
+
+
+def looks_like_contact(text):
+    """'WILLIAM J. DEZELLEM', 'BYRON ROTH' -> True; 'PROXY DEPARTMENT', 'STOCK LOAN', 'TRUST SECURITIES' -> False."""
+    if not isinstance(text, str):
+        return False
+    tokens = text.upper().split()
+    if not 2 <= len(tokens) <= 4 or any(not RE_NAME_TOKEN.match(t) for t in tokens):
+        return False
+    if any(t.strip(".") in CONTACT_STOP for t in tokens) or RE_INSTITUTIONAL.search(text) or RE_COMPANY_WORD.search(text):
+        return False
+    return any(len(t.strip(".'-")) >= 3 for t in tokens)
+
+
+def contact_people(text):
+    """Text after ATTN / KA: / C/O -> list of people (empty when it is not a person)."""
+    if not isinstance(text, str):
+        return []
+    t = re.split(r"\s+(?:C/O|ATTN)\b", text.upper())[0]     # "DINA BIBAS C/O FITZROY INVESTMENTS" -> DINA BIBAS
+    t = re.split(r"[/;,]", t)[0]                            # "NADINE MERCKX/ HAVENLAAN 12" -> NADINE MERCKX
+    t = RE_PREFIX.sub("", t.strip())                       # "MRS. RIZWANA BANU" -> RIZWANA BANU
+    words = t.split()
+    while words and words[-1].strip(".") in JOB_TITLES:   # "VINCENT CHEUNG CEO" -> VINCENT CHEUNG
+        words.pop()
+    t = " ".join(words)
+    parts = [p.strip() for p in RE_JOIN.split(t) if p.strip()]
+    if len(parts) > 1 and len(parts[0].split()) == 1 and len(parts[1].split()) >= 2:
+        parts[0] = f"{parts[0]} {parts[1].split()[-1]}"   # "JOHN AND MARY SMITH"
+    if not parts or not all(looks_like_contact(p) for p in parts):
+        return []
+    return parts[:2]
+
+
+# ------------------------------------------------------------------ trust legal name (client 2026-10-28)
+# The legal holder of a personal trust is the trust itself: its name up to the agreement date, e.g.
+#   "JOHN M LYNN TTEE | JOHN M LYNN REVOCABLE TRUST | U/A DTD 08/03/1984" -> JOHN M LYNN REVOCABLE TRUST U/A DTD 08/03/1984
+#   "JEFFREY POPPEL REVOCABLE | TRUST AGREEMENT | U/A DTD 04/23/2020 | JEFFREY POPPEL TTEE"
+#       -> JEFFREY POPPEL REVOCABLE TRUST AGREEMENT U/A DTD 04/23/2020
+# The trustees stay as primary / secondary contact. Trusts without U/A / DTD are not changed (manual review).
+RE_UA = re.compile(r"\bU/?A\b|\bUAD\b|\bU/A/D\b|\bDTD\b")
+RE_DATE = re.compile(r"\b\d{1,4}[/-]\d{1,2}[/-]\d{1,4}\b")
+RE_TRUST_WORD = re.compile(r"\b(?:TRUST|TR|TRT|TRST|REV|REVOC|REVOCABLE|IRREVOCABLE|LIVING|LIV|FAMILY|AMENDED|"
+                           r"RESTATED|AGREEMENT|DECLARATION|SURVIVORS?|MARITAL|BYPASS|GIFT)\b|\d")
+RE_TTEE_WORD = re.compile(r"\b(?:CO-?)?(?:TTEES?|TRUSTEES?|TRUSTE)\b")
+RE_TRUST_STOP = re.compile(r"\bCUST(?:ODIAN)?\b|\bC/F\b|\bFBO\b|\bATTN\b|\bC/O\b|\bIRA\b|\bROTH\b|\bPLAN\b|\b40[13]")
+
+
+def trust_segment(holder_name, lines):
+    """-> dict(name, used, tail, trustees, trustee_used) or None. Line 0 is the holder line, then the extra lines."""
+    L = [(holder_name or "").upper()] + [x.upper() for x in lines]
+    k = next((i for i, u in enumerate(L) if RE_UA.search(u)), None)
+    if k is None or RE_TTEE_WORD.search(L[k]):
+        return None
+    end = k
+    if not RE_DATE.search(L[k]) and k + 1 < len(L) and RE_DATE.search(L[k + 1]) and \
+            (len(L[k + 1].split()) <= 4 or RE_DATE.match(L[k + 1].strip())):
+        end = k + 1                                       # "... REV TRUST U/A | DTD 01/28/2022"
+    m = RE_DATE.search(L[end])
+    end_text = L[end][:m.end()] if m else L[end]
+    tail = (L[end][m.end():].strip(" ,-") or None) if m else None
+    start = k
+    if not L[k][:RE_UA.search(L[k]).start()].strip(" ,-"):    # the line starts with U/A: the name is on the line before
+        if k == 0 or RE_TTEE_WORD.search(L[k - 1]) or RE_TRUST_STOP.search(L[k - 1]):
+            return None
+        start = k - 1
+    while start > 0 and not RE_TTEE_WORD.search(L[start - 1]) and not RE_TRUST_STOP.search(L[start - 1]) \
+            and (not looks_like_person(L[start - 1]) or RE_TRUST_WORD.search(L[start - 1])):
+        start -= 1
+    if any(RE_TRUST_STOP.search(L[i]) for i in range(start, end + 1)):
+        return None
+    lead = None
+    mt = re.match(r"^(?:CO-?)?(?:TTEES?|TRUSTEES?)\s+(?P<rest>.+)$", L[start - 1]) if start > 0 else None
+    if mt and not RE_TRUST_STOP.search(L[start - 1]):
+        lead, start = mt.group("rest"), start - 1        # the line starts with CO-TTEE, the rest is the trust name
+    parts = L[start:end] + [end_text]
+    if lead:
+        parts[0] = lead
+    name = " ".join(" ".join(parts).split())
+    name = re.sub(r"\s+\d{1,2}:\d{2}(?::\d{2})?\b", "", name)      # "1996-11-06 00:00:00" (Excel date)
+    name = re.sub(r"^(?:AS\s+)?(?:TTEES?\s+)?OF\s+", "", name)
+    name = re.sub(r"\bTHE\s+THE\b", "THE", name)
+    if len(name.split()) < 3:
+        return None
+    # trustees written after the trust name over two lines: "MONICA M. COLEMAN & MATTHEW | COLEMAN TRUSTEES"
+    # or "... DTD 8/16/2021 JEFFREY B. | STRAUBEL TRUSTEE"
+    trustees, t_used = [], set()
+    chunk, idx = [tail] if tail else [], []
+    for j in range(end + 1, min(end + 3, len(L))):
+        chunk.append(L[j])
+        idx.append(j)
+        if RE_TTEE_WORD.search(L[j]):
+            joined = RE_TTEE_WORD.split(" ".join(chunk))[0]
+            found = [x for x in split_holder_name(joined) if x]
+            if found and (len(chunk) > 1):
+                trustees, t_used, tail = found, set(idx), None
+            break
+    return {"name": name, "used": set(range(start, end + 1)), "tail": tail, "trustees": trustees,
+            "trustee_used": t_used, "from_holder": start == 0}
 
 
 def same_person(a, b):
@@ -323,16 +436,44 @@ def _split_custodian(line):
 def split_extra_lines(extra, holder_type_value, holder_name=None):
     """Splits the extra registration lines (joined with ' | ').
     Returns dict: custodian, type_of_account, secondary_contact, leftover."""
-    out = {"custodian": None, "type_of_account": None, "secondary_contact": None, "leftover": None, "people": []}
+    out = {"custodian": None, "type_of_account": None, "secondary_contact": None, "leftover": None, "people": [],
+           "contacts": [], "trust_name": None, "trust_from_holder": False}
     lines = [x.strip() for x in extra.split("|")] if isinstance(extra, str) and extra.strip() else []
     lines = [x for x in lines if x]
     types, left, used = [], [], set()
     person = holder_type_value == "individual"
 
+    if person:                              # personal trust: holder_name = the trust's legal name (2026-10-28)
+        seg = trust_segment(holder_name, lines)
+        if seg:
+            out["trust_name"] = seg["name"]
+            out["trust_from_holder"] = seg["from_holder"]
+            used |= {i - 1 for i in seg["used"] | seg["trustee_used"] if i >= 1}
+            out["people"] += seg["trustees"]
+            if seg["tail"]:
+                left.append(seg["tail"])
+
     for i, line in enumerate(lines):
         if i in used:
             continue
         up = line.upper()
+        mc = RE_CONTACT_LINE.match(up)
+        if mc:                              # ATTN / KA: / C/O <person> -> contact (2026-10-28)
+            names = contact_people(mc.group("name"))
+            if names and len(names) == 1 and i + 1 < len(lines) and i + 1 not in used:
+                nxt = lines[i + 1].upper()
+                ma = RE_AND_LINE.match(nxt)                    # "C/O GEOFFREY B DURRELL | & ANDREA DURRELL"
+                if not ma and re.search(r"(?:&|\bAND)\s*$", mc.group("name")):
+                    ma = re.match(r"^(?P<name>.+)$", nxt)       # "C/O LEON BIBAS & | DINA BIBAS"
+                if ma and contact_people(ma.group("name")):
+                    names += contact_people(ma.group("name"))[:1]
+                    used.add(i + 1)
+            if names:
+                out["contacts"] += names
+                before = mc.group("before").strip(" -,|")
+                if before:
+                    left.append(before)
+                continue
         if RE_KEEP_ALWAYS.search(up):
             left.append(line)
             continue
@@ -407,9 +548,16 @@ def add_client_columns(accounts):
         a["entity_type"].isin(["individual", "joint_individual", "unknown"])
     a.loc[not_person, "entity_type"] = "company_institution"
     a.loc[(a["type"] == "individual") & (a["entity_type"] == "unknown"), "entity_type"] = "individual"
-    prim, sec, cust, toa, left = [], [], [], [], []
+    prim, sec, cust, toa, left, trust, types, from_contact = [], [], [], [], [], [], [], []
     for name, extra, t, ent, o in zip(a["holder_name"], a["holder_extra_lines"], a["type"], a["entity_type"], orig):
         p1 = p2 = None
+        plan_person = None
+        if t != "individual" and ent == "nominee_custodian" and isinstance(extra, str) \
+                and re.search(r"\bPLAN\b", extra.upper()):
+            # "DTC #997 | IBM | IBM DEFERRED SAVINGS PLAN | CLAUDIA BARCLAY": the plan participant is the holder
+            found = [x.strip() for x in extra.split("|") if looks_like_contact(x.strip().upper())]
+            if len(found) == 1:
+                plan_person, t = found[0].upper(), "individual"
         if t == "individual":
             if ent == "company_institution":    # company line holding for one person: "... | FBO LARRY TUCKER"
                 p1 = fbo_person(o)
@@ -419,7 +567,14 @@ def add_client_columns(accounts):
             else:
                 p1, p2 = split_holder_name(name)
         s = split_extra_lines(extra, t, name)
+        if plan_person:
+            p1 = plan_person
+            rest = [x for x in (s["leftover"] or "").split(" | ") if x and x.strip().upper() != plan_person]
+            s["leftover"] = " | ".join(rest) or None
+            s["secondary_contact"] = None
         p2 = p2 or s["secondary_contact"]
+        if s["trust_from_holder"] and s["people"]:
+            p1 = p2 = None
         if t == "individual" and not p1 and p2:
             # the holder line names the custodian or the trust, the person is on the next line
             # ("ATC AS CUST FOR IRA | SUSAN K EXAMPLE") -> that person is the primary contact
@@ -429,13 +584,24 @@ def add_client_columns(accounts):
                 p1 = person_name
             elif not p2 and not same_person(person_name, p1):
                 p2 = person_name
+        had_p1 = bool(p1)
+        if t != "individual" or not p1:     # ATTN / KA: / C/O person fills the empty contacts (2026-10-28)
+            for person_name in s["contacts"]:
+                if not p1:
+                    p1 = person_name
+                elif not p2 and not same_person(person_name, p1):
+                    p2 = person_name
         if same_person(p1, p2):             # the same person read twice (holder line and trust line)
             p2 = None
+        types.append(t)
+        from_contact.append(bool(p1) and not had_p1 and p1 in s["contacts"])
+        trust.append(s["trust_name"])
         prim.append(p1)
         sec.append(p2)
         cust.append(s["custodian"])
         toa.append(s["type_of_account"])
         left.append(s["leftover"])
+    a["type"], a["trust_name"], a["primary_from_contact"] = types, trust, from_contact
     a["primary_contact"], a["secondary_contact"] = prim, sec
     a["custodian"], a["type_of_account"], a["holder_extra_lines"] = cust, toa, left
     return a

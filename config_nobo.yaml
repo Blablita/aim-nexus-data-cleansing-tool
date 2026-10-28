@@ -26,6 +26,13 @@ columns:
     "3RD LINE OF NAME ADDRESS": line_3
     "4TH LINE OF NAME ADDRESS": line_4
     "5TH LINE OF NAME ADDRESS": line_5
+    "INPUT 1": line_1                  # standard input layout agreed with AIM Nexus (2026-10-28)
+    "INPUT 2": line_2                  # standard input layout agreed with AIM Nexus (2026-10-28)
+    "INPUT 3": line_3                  # standard input layout agreed with AIM Nexus (2026-10-28)
+    "INPUT 4": line_4                  # standard input layout agreed with AIM Nexus (2026-10-28)
+    "INPUT 5": line_5                  # standard input layout agreed with AIM Nexus (2026-10-28)
+    "INPUT 6": line_6                  # standard input layout agreed with AIM Nexus (2026-10-28)
+    "INPUT 7": line_7                  # standard input layout agreed with AIM Nexus (2026-10-28)
     "ZIP CODE FOR SORTING": zip_sort
     "SHARES": shares
     "CUSIP": cusip

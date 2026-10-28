@@ -30,9 +30,14 @@ def standardize_columns(df, rename_map):
     Returns: (df, unmapped:list[(original, new)])
     """
     new_columns, unmapped = {}, []
+    # headers are matched ignoring upper/lower case and extra spaces ("Input 1" = "INPUT 1", 2026-10-28)
+    norm = lambda c: " ".join(str(c).upper().split())
+    loose = {norm(k): v for k, v in rename_map.items()}
     for col in df.columns:
         if col in rename_map:
             new_columns[col] = rename_map[col]
+        elif norm(col) in loose:
+            new_columns[col] = loose[norm(col)]
         else:
             slug = slugify_column(col)
             new_columns[col] = slug

@@ -92,11 +92,14 @@ DATA_DICTIONARY = [
              "(account_category: an INSTITUTIONAL account such as a proxy service, omnibus or tax withholding "
              "account is institutional; a personal account such as an IRA, TOD, joint or UTMA account held by a "
              "person or for one person (FBO) is individual), then the holder name. See the Account_Types sheet."),
-    ("primary_contact", "The person on the account, for individual holders only (empty for corporate, institutional "
-                        "and unknown). The holder name without registration words and titles: 'ANNA M SAMPLE TOD' -> ANNA "
+    ("primary_contact", "The person on the account. For a company or institution, the person named after ATTN, KA: "
+                        "or C/O ('ATTN: WILLIAM J. DEZELLEM' -> WILLIAM J. DEZELLEM), otherwise empty. For a trust, the "
+                        "trustee. For an employer plan held through DTC, the plan participant. For a person: the holder name without registration words and titles: 'ANNA M SAMPLE TOD' -> ANNA "
                         "M SAMPLE, 'ROBERT T SAMPLE TTEE' -> ROBERT T SAMPLE, 'MR. JOHN SAMPLE AND' -> JOHN SAMPLE. Empty when the registration names no person "
                         "(for example 'ATC AS CUST FOR IRA' or 'SMITH FAMILY TRUST')."),
-    ("secondary_contact", "Second person on the account (joint holder), from the holder name ('J DOE & L DOE "
+    ("secondary_contact", "Second person on the account (joint holder, second trustee, or the second person after "
+                          "C/O: 'C/O GEOFFREY B DURRELL & ANDREA DURRELL' -> ANDREA DURRELL; TEN COM / TEN/COM = "
+                          "tenants in common), from the holder name ('J DOE & L DOE "
                           "TTEE', 'DUANE AND ANNE BARKER' -> DUANE BARKER and ANNE BARKER; & , AND, AND/OR and OR all "
                           "join two people) or from an extra registration line ('MARY Q EXAMPLE', 'JANE R SAMPLE JT TEN')."),
     ("Custodian", "Broker or bank holding the account as custodian, from the text before CUST / CUSTODIAN / C/F: "
@@ -121,7 +124,9 @@ DATA_DICTIONARY = [
                     "CUST, TTEE, FAO, EXEC, JT TEN, IRA...). For a person it is the first person on the account (the "
                     "same as primary_contact); the second person is in secondary_contact. Example: 'WILLIAM SAMPLE AND "
                     "LISA C SAMPLE' -> WILLIAM SAMPLE; 'J DOE & L DOE TTEE' -> J DOE (TTEE goes to notes); 'SMITH FAMILY "
-                    "TRUST U/A DTD' -> SMITH FAMILY (TRUST U/A DTD goes to notes). Company names keep '&' when it is part "
+                    "TRUST' -> SMITH FAMILY. A personal trust with an agreement date (U/A, UAD, DTD) keeps its legal name up to the "
+                    "date, and the trustees are the contacts: 'JOHN M LYNN TTEE | JOHN M LYNN REVOCABLE TRUST | U/A DTD "
+                    "08/03/1984' -> JOHN M LYNN REVOCABLE TRUST U/A DTD 08/03/1984 (primary_contact JOHN M LYNN). Company names keep '&' when it is part "
                     "of the legal name ('GLASS LEWIS & CO'). The holder line exactly as in the file is in original_lines."),
     ("notes", "First, the words removed from holder_name (for example TTEE, TOD, 'ATC AS CUST FOR IRA'). Then the registration lines that are not the name or the address and that were not moved to secondary_contact, "
               "Custodian or Type of Account (for example 'MSSB FBO ...', ATTN, C/O, trust dates, fund sub-account "
