@@ -14,6 +14,7 @@ Everything is controlled from the `input` section of the config.
 
 import csv
 import os
+import re
 
 import pandas as pd
 
@@ -65,6 +66,20 @@ def _read_raw_excel(path, sheet=0):
     raw = pd.read_excel(path, sheet_name=sheet, header=None, dtype=object, engine=engine)
     raw = raw.apply(lambda col: col.map(lambda v: "" if pd.isna(v) else _cell_to_text(v)))
     return raw, f"excel ({engine})", []
+
+
+# Invisible control characters (e.g. \x1a end-of-file, \x0c form feed) that some broker
+# exports leave inside a line. Excel cannot store them and the run stopped (2026-10-30).
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _remove_control_chars(raw):
+    """Replaces control characters with a space. Returns (raw, cells_changed)."""
+    mask = raw.apply(lambda c: c.astype(str).str.contains(_CONTROL_CHARS))
+    n = int(mask.values.sum())
+    if n:
+        raw = raw.apply(lambda c: c.astype(str).str.replace(_CONTROL_CHARS, " ", regex=True))
+    return raw, n
 
 
 # --------------------------------------------------------------------------
@@ -126,6 +141,9 @@ def read_table_robust(path, input_cfg):
                                            input_cfg.get("delimiter", ","))
     raw = raw.reset_index(drop=True)
     raw.columns = range(raw.shape[1])
+    raw, n_ctrl = _remove_control_chars(raw)
+    if n_ctrl:
+        warnings.append(f"{n_ctrl} cell(s) had invisible control characters; they were replaced by a space.")
 
     header_row = _find_header_row(raw, input_cfg.get("header_keyword"))
 
